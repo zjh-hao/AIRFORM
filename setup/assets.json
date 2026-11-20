@@ -1,0 +1,22 @@
+[
+  {
+    "file": "assets/models/hand_landmarker.task",
+    "source": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+    "sha256": "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1",
+    "bundled": true,
+    "version": "float16/1",
+    "provider": "Google MediaPipe",
+    "purpose": "Hand landmark inference in both modes",
+    "required": true
+  },
+  {
+    "file": ".cache/woman_hands.jpg",
+    "source": "https://storage.googleapis.com/mediapipe-tasks/hand_landmarker/woman_hands.jpg",
+    "sha256": "70cbeb38e198c9862202e0979c21a99b40ca980d3e7b250176c85b1636a40f12",
+    "bundled": false,
+    "version": "SHA-256 pinned",
+    "provider": "Google MediaPipe",
+    "purpose": "Official hand detection diagnostic image",
+    "required": true
+  }
+]

@@ -1,0 +1,17 @@
+/.venv/
+/.cache/
+/local-output/
+/web/node_modules/
+/web/dist/
+__pycache__/
+*.py[cod]
+*.log
+.env
+*.webm
+*.mp4
+*.mov
+*.avi
+*.y4m
+*.onnx
+.DS_Store
+Thumbs.db

@@ -1,0 +1,114 @@
+{
+  "evidence": "offline-calibration-on-recorded-physical-static-input",
+  "frames": 198,
+  "rawInteractionAblations": {
+    "fixedPalmScale": {
+      "stdX": 3.380811199179005,
+      "stdY": 0.8555217540070177,
+      "radialRms": 3.4873775012283117,
+      "p95": 6.823586697521551
+    },
+    "fixedPalmScaleAndTipRelativeZ": {
+      "stdX": 3.4734856738907034,
+      "stdY": 0.8351731393196874,
+      "radialRms": 3.5724804967088417,
+      "p95": 6.957084710555839
+    }
+  },
+  "pairedNoiseRamp": [
+    {
+      "options": {},
+      "motion": [
+        {
+          "axis": "x",
+          "speedPalmsPerSecond": 0.1,
+          "meanSignedLagMs": 169.9359650442339,
+          "p95AbsoluteLagMs": 210.7197269827621
+        },
+        {
+          "axis": "x",
+          "speedPalmsPerSecond": 0.5,
+          "meanSignedLagMs": 50.0923980524244,
+          "p95AbsoluteLagMs": 80.32620685828817
+        },
+        {
+          "axis": "x",
+          "speedPalmsPerSecond": 1,
+          "meanSignedLagMs": 28.08121018567164,
+          "p95AbsoluteLagMs": 39.01751415852406
+        },
+        {
+          "axis": "y",
+          "speedPalmsPerSecond": 0.1,
+          "meanSignedLagMs": 155.53921812788371,
+          "p95AbsoluteLagMs": 194.31824003160457
+        },
+        {
+          "axis": "y",
+          "speedPalmsPerSecond": 0.5,
+          "meanSignedLagMs": 41.532326077748586,
+          "p95AbsoluteLagMs": 64.46770273640645
+        },
+        {
+          "axis": "y",
+          "speedPalmsPerSecond": 1,
+          "meanSignedLagMs": 24.44823280256611,
+          "p95AbsoluteLagMs": 35.96299698841854
+        }
+      ]
+    },
+    {
+      "options": {
+        "minCutoff": 0.03,
+        "beta": 0
+      },
+      "motion": [
+        {
+          "axis": "x",
+          "speedPalmsPerSecond": 0.1,
+          "meanSignedLagMs": 1921.170344580081,
+          "p95AbsoluteLagMs": 3294.482969767519
+        },
+        {
+          "axis": "x",
+          "speedPalmsPerSecond": 0.5,
+          "meanSignedLagMs": 210.9049105466892,
+          "p95AbsoluteLagMs": 511.9177809279516
+        },
+        {
+          "axis": "x",
+          "speedPalmsPerSecond": 1,
+          "meanSignedLagMs": 96.84081323521328,
+          "p95AbsoluteLagMs": 153.00757832712895
+        },
+        {
+          "axis": "y",
+          "speedPalmsPerSecond": 0.1,
+          "meanSignedLagMs": 1978.2243194210396,
+          "p95AbsoluteLagMs": 3286.120813341674
+        },
+        {
+          "axis": "y",
+          "speedPalmsPerSecond": 0.5,
+          "meanSignedLagMs": 115.12153222183488,
+          "p95AbsoluteLagMs": 351.1940554740338
+        },
+        {
+          "axis": "y",
+          "speedPalmsPerSecond": 1,
+          "meanSignedLagMs": 55.95305009799085,
+          "p95AbsoluteLagMs": 80.00802462787155
+        }
+      ]
+    }
+  ],
+  "baseline": {
+    "options": {},
+    "stdX": 3.0723501894609133,
+    "stdY": 1.0251009268333007,
+    "radialRms": 3.238852821119694,
+    "p95": 6.475407113110354,
+    "slowRampLagMs": 54.88250078689317
+  },
+  "note": "Cold-start replay of the independent cursor branch, not fresh real-time validation. Synthetic ramp lag excludes camera/inference/render latency."
+}

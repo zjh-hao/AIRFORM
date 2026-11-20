@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AIRFORM · 虚拟特效工坊</title>
+<link rel="icon" type="image/svg+xml" href="./web/public/airform.svg">
+<style>
+  :root { color-scheme: dark; font: 16px/1.65 system-ui, sans-serif; background: #101318; color: #eeefe7; }
+  body { min-height: 95vh; display: grid; place-items: center; margin: 0; }
+  main { width: min(32rem, 86vw); }
+  h1 { display: flex; gap: .45em; align-items: center; font: 700 2.4rem/1 Bahnschrift, Arial, sans-serif; margin: 0; }
+  h1 img { width: 1.2em; }
+  h1 small { font: 600 1.1rem/1.2 system-ui, sans-serif; }
+  p { color: #bec5ca; }
+  a { color: #d8fa43; text-underline-offset: .35em; margin-right: 1.2rem; }
+</style>
+<main>
+  <h1><img src="./web/public/airform.svg" alt="">AIRFORM <small>虚拟特效工坊</small></h1>
+  <p id="status" role="status">正在连接本机工坊服务…</p>
+  <a id="launch" href="airform-workshop://start" hidden>启动工坊</a>
+  <a id="enter" href="http://127.0.0.1:4187/" hidden>进入工坊</a>
+  <noscript>请启用 JavaScript，或在本机服务启动后<a href="http://127.0.0.1:4187/">进入工坊</a>。</noscript>
+</main>
+<script>
+  const statusLine = document.getElementById('status');
+  const launch = document.getElementById('launch');
+  const enter = document.getElementById('enter');
+  let attempt = 0;
+
+  function serviceReady(url) {
+    return new Promise(resolve => {
+      const image = new Image();
+      const timer = setTimeout(() => resolve(false), 1500);
+      image.onload = image.onerror = () => {
+        clearTimeout(timer);
+        resolve(image.naturalWidth === 4 && image.naturalHeight === 2);
+      };
+      image.src = url + 'workshop-ready.svg?t=' + Date.now();
+    });
+  }
+
+  async function connect(starting) {
+    const current = ++attempt;
+    const deadline = Date.now() + (starting ? 60000 : 0);
+    do {
+      const urls = ['http://127.0.0.1:4187/', 'http://127.0.0.1:4188/'];
+      const results = await Promise.all(urls.map(serviceReady));
+      const url = urls[results.indexOf(true)];
+      if (current !== attempt) return;
+      if (url) {
+        enter.href = url;
+        location.replace(url);
+        return;
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise(resolve => setTimeout(resolve, 800));
+    } while (current === attempt);
+    launch.hidden = false;
+    enter.hidden = !starting;
+    statusLine.textContent = starting
+      ? '暂未连上工坊。若已允许启动，可点「进入工坊」重试；首次在新电脑使用请按项目 README 配置。'
+      : '点击启动本机服务。浏览器若询问是否打开工坊，请选择允许。';
+  }
+  launch.addEventListener('click', () => {
+    statusLine.textContent = '正在等待本机服务就绪…';
+    enter.hidden = false;
+    connect(true);
+  });
+  connect(false);
+</script>
+</html>

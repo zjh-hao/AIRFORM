@@ -1,0 +1,11 @@
+{
+  "samples": 12000,
+  "synthetic": true,
+  "scope": "21-joint fusion + sampling + robust Kalman + scene mapping; excludes capture, inference, gesture scale, bridging, DOM and rendering",
+  "meanMs": 0.018665583333333142,
+  "p50Ms": 0.01470000000000482,
+  "p95Ms": 0.03130000000001587,
+  "p99Ms": 0.1266999999999996,
+  "maxMs": 1.1025000000000205,
+  "oneCoreBudgetAt30HzPercent": 0.05599674999999943
+}

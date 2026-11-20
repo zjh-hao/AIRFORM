@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 112">
+  <title>AIRFORM</title>
+  <defs>
+    <mask id="pen-cut" x="0" y="0" width="128" height="112" maskUnits="userSpaceOnUse">
+      <rect width="128" height="112" fill="white"/>
+      <path d="M8 91 Q67 93 119 48" fill="none" stroke="black" stroke-width="13"/>
+    </mask>
+  </defs>
+  <g fill="#d4f770">
+    <path mask="url(#pen-cut)" d="M7 98 50 20Q55 10 63 10T76 20L119 98H99L63 32 27 98Z"/>
+    <path d="M4 94C33 93 79 79 121 46 102 70 59 96 14 100Z"/>
+  </g>
+</svg>

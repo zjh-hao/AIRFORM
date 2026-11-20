@@ -1,0 +1,5 @@
+historical_mode,observed_right_hand_frames,reported_frames,motion_only_frames,output_hz,gap_p95_ms
+original,190,298,0,29.5,55
+sensitive,201,301,0,29.9,55
+enhanced,183,216,24,21.4,117
+enhanced_repeat,177,208,25,20.6,144

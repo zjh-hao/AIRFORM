@@ -1,0 +1,4 @@
+window_seconds,reported_frames,reference_visible_frames,visible_output_frames,motion_only_frames,longest_lost_run_frames
+all,783,530,766,155,15
+0-25,747,503,736,155,9
+19-25,179,65,168,68,9

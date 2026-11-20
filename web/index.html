@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101318"><title>AIRFORM · 虚拟特效工坊</title>
+<link rel="icon" type="image/svg+xml" href="/airform.svg">
+<link rel="stylesheet" href="./src/workstation.css"></head><body>
+<header class="mast"><button type="button" id="home" class="identity" aria-label="AIRFORM，返回首页"><img src="/airform.svg" width="40" height="35" alt=""><b>AIRFORM</b><span class="line"></span><span class="code">SPATIAL SYSTEMS<br>INTERFACE / 04</span></button>
+<button id="effects-open" aria-haspopup="dialog">特效目录 ↗</button><button id="settings-open" class="dark" aria-haspopup="dialog">工坊设置 <b>☰</b></button></header>
+<canvas id="field-cloud" aria-hidden="true"></canvas>
+<main class="stage">
+<div id="scene" aria-label="可旋转的三维绘画画布"><span class="pane-title">02　/　三维笔迹</span></div>
+<div id="landing"><div id="field-region"></div></div>
+<div class="session-column"><section class="intro"><h1>虚拟特效工坊</h1>
+<p class="subtitle">VIRTUAL EFFECTS WORKSHOP</p><p class="lede">在空气中留下光轨，让三维物体悬浮于掌心。用双手把特效带进现实。</p></section>
+<aside class="session"><button id="browse-fx" aria-haspopup="dialog">选择特效 ↗</button><p class="home-hint">选「空间绘画」用画笔留下光轨，或选「掌上全息」托起精密仪器或暗尘银河。</p><p id="drawing-status" role="status">选择创作模式后，启动摄像头。</p>
+<div class="actions"><button id="start" class="primary" disabled>加载模型…</button><button id="stop" disabled>停止输入</button><button id="mouse-mode" aria-pressed="false" disabled>鼠标试画</button></div>
+<div id="alert" role="alert" hidden></div></aside></div>
+<div class="view-actions"><button id="guide-toggle" aria-expanded="false">手势指南</button><button id="front-view" disabled>正面视图 ↺</button></div>
+<div id="guide" hidden>张开右手解锁 → 拇指、食指捏合移动 → 松手结束。拖动画布旋转视角；鼠标试画模式仅绘制平面笔迹。</div>
+<div class="camera-slot"><details id="preview"><summary><i></i> SENSOR / 输入预览</summary><span class="pane-title">01　/　实景追踪</span><div class="hand-preview"><video muted playsinline></video><canvas id="camera" width="640" height="480"></canvas><canvas id="skeleton" width="640" height="480"></canvas></div><label><input type="checkbox" id="show-skeleton" checked> 显示骨架</label></details></div>
+</main>
+<footer class="dock"><div class="dock-title"><span class="code">空间绘画 / 画笔</span><strong>矿物光笔</strong></div><div id="brush-colors" role="group" aria-label="下一笔颜色"></div>
+<label>粗细 <input id="brush-size" type="range" min="1" max="8" step=".2" value="3.6"></label>
+<label>辉光 <select id="brush-glow"><option value="auto">自动</option><option value="on">开启</option><option value="off">关闭</option></select></label>
+<div class="dock-actions"><button id="undo" disabled>撤销</button><button id="redo" disabled>重做</button><button id="clear-canvas" disabled>清除</button><button id="png">截图 PNG</button><button id="export-open">导出 ↗</button></div></footer>
+<span id="clear-status" role="status"></span>
+<dialog id="fx-library" aria-labelledby="fx-title"><header><div><span class="code">EFFECT LIBRARY</span><h2 id="fx-title">特效目录</h2></div><form method="dialog"><button aria-label="关闭特效目录">关闭 ×</button></form></header>
+<div id="fx-modes" role="group" aria-label="创作模式"><button data-mode="painting">空间绘画</button><button data-mode="solar">掌上全息</button></div>
+<div id="fx-brushes"><h3 id="fx-brush-label">画笔</h3><div id="fx-options" role="group" aria-labelledby="fx-brush-label"></div></div>
+<div id="fx-holograms" hidden>
+  <div class="holo-options" role="group" aria-label="星系"><h3>星系</h3></div>
+  <div class="holo-options" role="group" aria-label="写实科技"><h3>写实科技</h3></div>
+  <div class="holo-options"><h3>本地素材</h3><button type="button" id="holo-custom">自定义素材</button></div>
+  <div id="holo-import" hidden>
+    <button type="button" id="holo-drop">拖入 GLB 或 WebP，或点击选择文件</button>
+    <input hidden id="holo-file" type="file" accept=".glb,.webp">
+    <p id="holo-message" role="status"></p>
+    <div id="holo-controls" hidden>
+      <label>掌上大小 <input id="holo-scale" type="range" min="25" max="200" step="5" value="100"> <output id="holo-percent" for="holo-scale">100%</output></label>
+      <label id="holo-format-label" hidden>WebP 显示 <select id="holo-format"><option value="image">图片 / 动图</option><option value="atlas">8×8 动画图集</option></select></label>
+    </div>
+  </div>
+</div>
+<section class="fx-card" aria-live="polite"><figure id="fx-swatch" aria-hidden="true"><svg viewBox="0 0 336 160"><path d="M22 126 C92 140 114 12 164 31 S178 146 224 110 S268 37 316 57" fill="none" stroke="#42b8ff" stroke-width="5" stroke-linecap="round"/></svg><canvas id="holo-preview" width="288" height="288" hidden aria-label="素材动态预览"></canvas></figure><div><h3 id="fx-name"></h3><p id="fx-description"></p><button id="fx-apply"></button></div></section></dialog>
+<dialog id="drawer"><header><div><span class="code">WORKSHOP CONTROL　/　03</span><h2>工坊设置</h2></div><form method="dialog"><button aria-label="关闭设置">关闭 ×</button></form></header>
+<section><h3>01　输入设备</h3><label>摄像头 <select id="input-source"><option value="webcam">普通摄像头</option><option value="astra">Astra RGB-D</option></select></label><p id="input-description"></p>
+<div class="painting-settings"><label for="smoothing">笔迹平滑强度</label> <output id="smoothing-value" for="smoothing">50%</output><input type="range" id="smoothing" min="0" max="100" value="50">
+<p id="brush-glow-status"></p></div></section>
+<section id="archive"><h3>02　空间笔迹导出</h3><p>仅导出三维绘画作品，不包含实景或特效预览。GLB 保留三维几何，辉光属于本地显示效果。</p>
+<button id="export-json">笔迹 JSON</button> <button id="export-glb">三维模型 GLB</button></section>
+<details id="validation-panel"><summary>03　实验采集与本地回放</summary>
+<p>在摄像头画面稳定后开始采集。结束后请点击下载链接保存。</p>
+<label>测试组 <select id="validation-case"><option value="static">正面静止</option><option value="drawing">连续绘画</option><option value="rotation">侧转 / 指向镜头 / 短时出画</option><option value="low-light">低光 / 运动模糊</option></select></label>
+<label><input id="record-video" type="checkbox" checked> 同时录制输入视频</label>
+<p><button id="record-start">开始采集</button> <button id="record-stop" disabled>结束并生成文件</button></p>
+<label>回放观测 JSON <input id="replay-file" type="file" accept=".json,application/json"></label> <button id="replay-stop" disabled>停止回放</button>
+<button id="demo-replay">播放离线样例</button><p id="validation-status" role="status">尚未采集。</p><p id="validation-downloads"></p>
+<p>开始回放会停止相机并替换当前画布，请先导出需要保留的作品。</p>
+<a data-tracking="legacy" href="?tracking=legacy">旧算法对照</a> · <a data-tracking="world" href="?tracking=world">三维手势</a> · <a href="/assets/m1-synthetic-observations.json" download>下载合成回放样例</a></details>
+<details><summary>04　设备诊断</summary><p id="status">正在加载页面资源…</p><p id="backend"></p><p id="scene-status"></p><p id="stroke-status"></p><pre id="render-metrics"></pre><pre id="interaction"></pre><pre id="received"></pre><pre id="tracking"></pre><button id="fixture" disabled>官方图片自检</button>
+<p><a id="inference-switch"></a>（会重载页面，请先导出作品）</p>
+<section id="depth-preview" hidden><p id="depth-point-status"></p><p id="fusion-metrics"></p><p id="depth-status"></p><canvas id="depth" width="640" height="480"></canvas></section></details>
+<p class="credits"><a href="/THIRD_PARTY_NOTICES.md">第三方声明</a> · <a href="/LICENSE.mediapipe">MediaPipe</a> · <a href="/LICENSE.three">Three.js</a></p></dialog>
+
+<script type="module" src="/src/main.js"></script></body></html>

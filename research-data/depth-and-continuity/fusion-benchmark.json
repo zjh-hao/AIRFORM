@@ -1,0 +1,11 @@
+{
+  "samples": 12000,
+  "synthetic": true,
+  "scope": "21-joint fusion + sampling + One Euro + scene mapping; excludes capture, inference, DOM and rendering",
+  "meanMs": 0.013449000000000046,
+  "p50Ms": 0.011699999999990496,
+  "p95Ms": 0.019000000000005457,
+  "p99Ms": 0.09299999999998931,
+  "maxMs": 0.48380000000000223,
+  "oneCoreBudgetAt30HzPercent": 0.04034700000000014
+}

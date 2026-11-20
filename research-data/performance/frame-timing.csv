@@ -1,0 +1,4 @@
+historical_mode,observations_hz,gap_p95_ms,gap_max_ms,preview_frames,preview_gap_max_ms
+enhanced_before,23.3,110,,,
+enhanced_after,24.2,109,163,302,49
+enhanced_after_650ms_delay,28,79,170,300,103

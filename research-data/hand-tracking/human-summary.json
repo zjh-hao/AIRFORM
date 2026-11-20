@@ -1,0 +1,101 @@
+{
+  "evidence": "historical physical Astra recordings",
+  "sessions": [
+    {
+      "case": "drawing",
+      "frames": 1197,
+      "durationMs": 60037.89999999851,
+      "detectorOutputHz": 19.920750059546215,
+      "detectedHandFrames": 747,
+      "detectedHandFraction": 0.6240601503759399,
+      "qualifiedInteractionFrames": 700,
+      "qualifiedInteractionFraction": 0.5847953216374269,
+      "heldCursorFrames": 0,
+      "meanInferenceMs": 20.856641604183064
+    },
+    {
+      "case": "low-light",
+      "frames": 503,
+      "durationMs": 29990.29999999702,
+      "detectorOutputHz": 16.738745527722294,
+      "detectedHandFrames": 377,
+      "detectedHandFraction": 0.7495029821073559,
+      "qualifiedInteractionFrames": 273,
+      "qualifiedInteractionFraction": 0.5427435387673957,
+      "heldCursorFrames": 4,
+      "meanInferenceMs": 19.883101391804146
+    },
+    {
+      "case": "rotation",
+      "frames": 1161,
+      "durationMs": 58077.39999999851,
+      "detectorOutputHz": 19.973345914245986,
+      "detectedHandFrames": 1161,
+      "detectedHandFraction": 1,
+      "qualifiedInteractionFrames": 1161,
+      "qualifiedInteractionFraction": 1,
+      "heldCursorFrames": 0,
+      "meanInferenceMs": 22.437639965496885
+    },
+    {
+      "case": "rotation",
+      "frames": 1152,
+      "durationMs": 57656.09999999404,
+      "detectorOutputHz": 19.963195568207336,
+      "detectedHandFrames": 1111,
+      "detectedHandFraction": 0.9644097222222222,
+      "qualifiedInteractionFrames": 1101,
+      "qualifiedInteractionFraction": 0.9557291666666666,
+      "heldCursorFrames": 0,
+      "meanInferenceMs": 21.686284722229985
+    },
+    {
+      "case": "rotation",
+      "frames": 1064,
+      "durationMs": 49975.39999999851,
+      "detectorOutputHz": 21.27046506881449,
+      "detectedHandFrames": 1064,
+      "detectedHandFraction": 1,
+      "qualifiedInteractionFrames": 1064,
+      "qualifiedInteractionFraction": 1,
+      "heldCursorFrames": 0,
+      "meanInferenceMs": 22.69389097746882
+    },
+    {
+      "case": "static",
+      "frames": 599,
+      "durationMs": 30001.29999999702,
+      "detectorOutputHz": 19.932469592986283,
+      "detectedHandFrames": 599,
+      "detectedHandFraction": 1,
+      "qualifiedInteractionFrames": 588,
+      "qualifiedInteractionFraction": 0.9816360601001669,
+      "heldCursorFrames": 0,
+      "meanInferenceMs": 22.01669449065633
+    },
+    {
+      "case": "static",
+      "frames": 222,
+      "durationMs": 9963,
+      "detectorOutputHz": 22.18207367258858,
+      "detectedHandFrames": 222,
+      "detectedHandFraction": 1,
+      "qualifiedInteractionFrames": 222,
+      "qualifiedInteractionFraction": 1,
+      "heldCursorFrames": 0,
+      "meanInferenceMs": 21.357657657650947
+    },
+    {
+      "case": "static",
+      "frames": 200,
+      "durationMs": 10049.60000000149,
+      "detectorOutputHz": 19.801783155545543,
+      "detectedHandFrames": 200,
+      "detectedHandFraction": 1,
+      "qualifiedInteractionFrames": 200,
+      "qualifiedInteractionFraction": 1,
+      "heldCursorFrames": 0,
+      "meanInferenceMs": 24.101499999761582
+    }
+  ]
+}
