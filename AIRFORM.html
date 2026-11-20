@@ -1,71 +1,65 @@
 <!doctype html>
 <html lang="zh-CN">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AIRFORM · 虚拟特效工坊</title>
-<link rel="icon" type="image/svg+xml" href="./web/public/airform.svg">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIRFORM · Astra Python GPU</title>
+<link rel="icon" href="./web/public/airform.svg">
 <style>
   :root { color-scheme: dark; font: 16px/1.65 system-ui, sans-serif; background: #101318; color: #eeefe7; }
   body { min-height: 95vh; display: grid; place-items: center; margin: 0; }
-  main { width: min(32rem, 86vw); }
-  h1 { display: flex; gap: .45em; align-items: center; font: 700 2.4rem/1 Bahnschrift, Arial, sans-serif; margin: 0; }
-  h1 img { width: 1.2em; }
-  h1 small { font: 600 1.1rem/1.2 system-ui, sans-serif; }
-  p { color: #bec5ca; }
-  a { color: #d8fa43; text-underline-offset: .35em; margin-right: 1.2rem; }
+  main { width: min(34rem, 86vw); }
+  h1 img { width: 1em; margin-right: .45em; }
+  a { color: #d8fa43; text-underline-offset: .3em; }
 </style>
 <main>
-  <h1><img src="./web/public/airform.svg" alt="">AIRFORM <small>虚拟特效工坊</small></h1>
-  <p id="status" role="status">正在连接本机工坊服务…</p>
-  <a id="launch" href="airform-workshop://start" hidden>启动工坊</a>
-  <a id="enter" href="http://127.0.0.1:4187/" hidden>进入工坊</a>
-  <noscript>请启用 JavaScript，或在本机服务启动后<a href="http://127.0.0.1:4187/">进入工坊</a>。</noscript>
+  <h1><img src="./web/public/airform.svg" alt="">AIRFORM · Astra Python GPU</h1>
+  <p id="status" role="status">正在打开实验工坊…</p>
+  <a id="launch" href="airform-astra-python://start" hidden>启动 Python GPU 工坊</a>
+  <p id="setup" hidden><a href="./requirement.md">首次安装说明</a></p>
+  <noscript><a href="http://127.0.0.1:4197/?input=astra">打开实验工坊</a></noscript>
 </main>
 <script>
+  const origin = 'http://127.0.0.1:4197/';
   const statusLine = document.getElementById('status');
   const launch = document.getElementById('launch');
-  const enter = document.getElementById('enter');
-  let attempt = 0;
+  let generation = 0;
 
-  function serviceReady(url) {
+  function ready() {
     return new Promise(resolve => {
-      const image = new Image();
-      const timer = setTimeout(() => resolve(false), 1500);
-      image.onload = image.onerror = () => {
+      const marker = new Image();
+      const timer = setTimeout(() => resolve(false), 1200);
+      marker.onload = marker.onerror = () => {
         clearTimeout(timer);
-        resolve(image.naturalWidth === 4 && image.naturalHeight === 2);
+        resolve(marker.naturalWidth === 7 && marker.naturalHeight === 3);
       };
-      image.src = url + 'workshop-ready.svg?t=' + Date.now();
+      marker.src = `${origin}astra-python-ready.svg?t=${Date.now()}`;
     });
   }
 
-  async function connect(starting) {
-    const current = ++attempt;
-    const deadline = Date.now() + (starting ? 60000 : 0);
+  async function connect(starting = false) {
+    const current = ++generation;
+    const deadline = Date.now() + (starting ? 30000 : 0);
     do {
-      const urls = ['http://127.0.0.1:4187/', 'http://127.0.0.1:4188/'];
-      const results = await Promise.all(urls.map(serviceReady));
-      const url = urls[results.indexOf(true)];
-      if (current !== attempt) return;
-      if (url) {
-        enter.href = url;
-        location.replace(url);
+      const available = await ready();
+      if (current !== generation) return;
+      if (available) {
+        location.replace(`${origin}?input=astra`);
         return;
       }
       if (Date.now() >= deadline) break;
-      await new Promise(resolve => setTimeout(resolve, 800));
-    } while (current === attempt);
+      await new Promise(resolve => setTimeout(resolve, 650));
+    } while (current === generation);
     launch.hidden = false;
-    enter.hidden = !starting;
+    document.getElementById('setup').hidden = false;
     statusLine.textContent = starting
-      ? '暂未连上工坊。若已允许启动，可点「进入工坊」重试；首次在新电脑使用请按项目 README 配置。'
-      : '点击启动本机服务。浏览器若询问是否打开工坊，请选择允许。';
+      ? '服务还未就绪。请核对首次安装说明，再点「启动 Python GPU 工坊」。'
+      : '点「启动 Python GPU 工坊」，如果浏览器询问，请允许打开本机应用。';
   }
+
   launch.addEventListener('click', () => {
-    statusLine.textContent = '正在等待本机服务就绪…';
-    enter.hidden = false;
-    connect(true);
+    statusLine.textContent = '正在等待 Python GPU 工坊启动…';
+    void connect(true);
   });
-  connect(false);
+  void connect();
 </script>
 </html>

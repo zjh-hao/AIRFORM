@@ -1,0 +1,10 @@
+input,backend,metric,samples,median,p95,unit,failures
+fixture_replay,python_directml,inference,192,4.57,6.92,ms,
+fixture_replay,python_mediapipe_cpu,inference,192,15.69,17.45,ms,
+fixture_replay,python_directml,pair_to_browser_raf,192,13.60,34.87,ms,
+fixture_replay,python_mediapipe_cpu,pair_to_browser_raf,192,25.04,28.21,ms,
+fixture_replay,python_directml,cursor_phase_lag,8,34.70,38.16,ms,0
+fixture_replay,python_mediapipe_cpu,cursor_phase_lag,8,44.27,45.87,ms,0
+fixture_replay,python_directml,occlusion_recovery,5,15.17,26.87,ms,0
+fixture_replay,python_mediapipe_cpu,occlusion_recovery,5,21.24,25.44,ms,0
+fixture_replay,python_directml,static_hologram_center_drift,494,0.00,0.00,px,0

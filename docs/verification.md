@@ -1,5 +1,13 @@
 # 发布验证记录
 
+## Astra Python GPU 发布版
+
+2026-11-20，在同一台 Windows x64 电脑的独立目录进行干净克隆，目录名含中文和空格。使用 Python 3.12 与 Node 24，首次创建虚拟环境、从原任务包转换两个 DirectML 网络、安装前端锁定依赖、构建网页并注册独立 Windows 协议。158 项前端测试和 11 项 Python 测试全部通过。
+
+Edge 从根目录 `AIRFORM.html` 进入端口 4197 的 Astra Python GPU 工坊。干净克隆生成的两个网络均以 `DmlExecutionProvider` 运行。实机初次验证收到 163 帧，发布复测时深度相机出现 OpenNI 102 超时，旧基线的独立深度自检也复现。GPU 同帧回放和软件延迟记录见 [Astra Python A/B 验证](astra-python-ab.md)。
+
+## 浏览器 GPU 基线
+
 2026-11-20 在 Windows x64、Python 3.12、Node 24 和桌面 Edge 上检查单模型版。
 
 | 检查项 | 观测 |

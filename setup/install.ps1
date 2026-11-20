@@ -16,14 +16,15 @@ try {
     Invoke-Checked $python @('-c',"import sys,struct; assert sys.version_info[:2]==(3,12) and struct.calcsize('P')==8, 'Python 3.12 x64 required'")
     Invoke-Checked $python @('-m','pip','install','-r','requirements.txt')
     Invoke-Checked $python @('setup/fetch_assets.py')
+    Invoke-Checked $python @('setup/prepare_astra_gpu.py')
     if ($env:OPENNI2_REDIST64 -and (Test-Path -LiteralPath (Join-Path $env:OPENNI2_REDIST64 'OpenNI2.dll'))) {
         Set-Content -LiteralPath (Join-Path $root '.cache/openni2-runtime.txt') -Value $env:OPENNI2_REDIST64 -Encoding UTF8
     }
     Invoke-Checked $npm @('--prefix','web','ci','--no-audit','--no-fund')
     Invoke-Checked $npm @('--prefix','web','run','build')
-    foreach ($asset in @('index.html','workshop-ready.svg','tracking-worker.js','assets/hand_landmarker.task')) {
+    foreach ($asset in @('index.html','astra-python-ready.svg','tracking-worker.js','assets/hand_landmarker.task')) {
         if (!(Test-Path -LiteralPath (Join-Path $root "web/dist/$asset"))) { throw "Missing built asset: $asset" }
     }
     Invoke-Checked $python @('backend/workshop_launcher.py','--register')
-    Write-Host 'Ready. Double-click AIRFORM.html.'
+    Write-Host 'AIRFORM Astra Python is ready. Double-click AIRFORM.html.'
 } finally { Pop-Location }

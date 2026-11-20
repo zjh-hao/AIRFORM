@@ -1,4 +1,4 @@
-"""Register the per-user Windows URL handler, or start the local AIRFORM workshop."""
+"""Register and start the separate Astra Python experiment on Windows."""
 from pathlib import Path
 import os
 import subprocess
@@ -13,9 +13,9 @@ def register():
     pythonw = PYTHON.with_name('pythonw.exe')
     if not pythonw.is_file():
         raise FileNotFoundError(pythonw)
-    scheme = r'Software\Classes\airform-workshop'
+    scheme = r'Software\Classes\airform-astra-python'
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, scheme) as key:
-        winreg.SetValueEx(key, '', 0, winreg.REG_SZ, 'URL:AIRFORM Workshop')
+        winreg.SetValueEx(key, '', 0, winreg.REG_SZ, 'URL:AIRFORM Astra Python')
         winreg.SetValueEx(key, 'URL Protocol', 0, winreg.REG_SZ, '')
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, scheme + r'\shell\open\command') as key:
         # The handler always starts this workshop. It does not consume URL arguments.
@@ -25,8 +25,8 @@ def register():
 
 def serve():
     import msvcrt
-    folder = Path(os.environ['LOCALAPPDATA']) / 'AIRFORM'
-    folder.mkdir(exist_ok=True)
+    folder = ROOT / 'local-output' / 'launcher'
+    folder.mkdir(parents=True, exist_ok=True)
     with (folder / 'launcher.lock').open('a+b') as lock:
         lock.seek(0)
         try:

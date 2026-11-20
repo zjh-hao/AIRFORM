@@ -13,6 +13,7 @@ from http.server import ThreadingHTTPServer
 import numpy as np
 
 from backend.astra.registration import DepthRegistration
+from backend.astra.hand_tracking import TrackedAstra
 from backend.astra.server import CaptureManager, handler_for, pack_frame
 from backend.astra.openni import is_astra_pro_plus
 
@@ -133,6 +134,44 @@ class AstraTests(unittest.TestCase):
             self.assertEqual(Broken.opened, Broken.closed)
         finally:
             m.stop(shutdown=True)
+
+    def test_slow_python_tracker_keeps_the_matched_latest_color_depth_and_timestamp(self):
+        class Camera(FakeCamera):
+            index = 0
+
+            def read(self):
+                time.sleep(.002)
+                self.index += 1
+                return (np.full((1, 1, 3), self.index, np.uint8), np.full((1, 1), self.index, np.uint16),
+                        {'captured_monotonic': self.index * .002, 'depth_index': self.index})
+
+        class Tracker:
+            def __init__(self, mode):
+                self.mode = mode
+                self.closed = False
+
+            def detect(self, image, captured_at):
+                time.sleep(.035)
+                return {'color': int(image[0, 0, 0]), 'captured_at': captured_at}
+
+            def close(self):
+                self.closed = True
+
+        source = TrackedAstra(Camera, 'VIDEO', Tracker)
+        try:
+            first = source.read()[2]
+            bgr, depth, second = source.read()
+            index = second['sequence']
+            self.assertGreater(index, first['sequence'] + 1)
+            self.assertEqual(index, second['depth_index'])
+            self.assertEqual(index, depth[0, 0])
+            self.assertEqual(index, bgr[0, 0, 0])
+            self.assertEqual(second['tracking'], {'color': index, 'captured_at': index * .002})
+        finally:
+            source.close()
+        self.assertFalse(source.thread.is_alive())
+        self.assertTrue(source.tracker.closed)
+        self.assertEqual(Camera.opened, Camera.closed)
 
     def test_http_requires_local_host_and_same_origin_custom_header(self):
         with tempfile.TemporaryDirectory() as directory:

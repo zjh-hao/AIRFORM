@@ -236,6 +236,30 @@ test('late start after Stop releases its own token without publishing a frame', 
   assert.deepEqual(calls.at(-1),['stop',{session:'old'}]);assert.equal(s.running,false);
 });
 
+test('a restart during Astra startup waits for the abandoned lease to be released', async () => {
+  let completeStart, completeStop;
+  const calls = [];
+  const flush = () => new Promise(setImmediate);
+  const s = new AstraSession({detect:()=>{}, stopped:()=>{}, post:async(action,body)=>{
+    calls.push([action,body]);
+    if (action === 'stop') return new Promise(resolve => { completeStop = resolve; });
+    if (calls.length === 1) return new Promise(resolve => { completeStart = resolve; });
+    throw Error('test complete');
+  }});
+  const first = s.start();
+  await flush();
+  const stopping = s.stop();
+  const restarted = s.start();
+  completeStart({session:'old'});
+  await flush();
+  assert.deepEqual(calls.map(([action])=>action),['start','stop']);
+  completeStop({});
+  await stopping;
+  assert.equal(await first,false);
+  assert.equal(await restarted,false);
+  assert.deepEqual(calls.map(([action])=>action),['start','stop','start']);
+});
+
 test('one frame/inference in flight; Stop suppresses late inference results and closes image', async () => {
   let finish,closed=0,detects=0;
   const s=new AstraSession({post:async()=>({session:'s'}),get:async()=>response(1),

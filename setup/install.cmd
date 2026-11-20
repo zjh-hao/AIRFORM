@@ -6,4 +6,4 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-echo AIRFORM is ready. Open AIRFORM.html.
+echo AIRFORM Astra Python is ready. Open AIRFORM.html.

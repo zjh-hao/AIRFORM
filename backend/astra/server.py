@@ -14,6 +14,7 @@ import threading
 import time
 import webbrowser
 from functools import partial
+from http.client import HTTPConnection, HTTPException
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -22,10 +23,13 @@ import numpy as np
 
 from .camera import AstraCamera
 from .capture_process import IsolatedAstra
+from .hand_gpu import GpuHandTracker
+from .hand_tracking import HandTracker, TrackedAstra
 
 ROOT = Path(__file__).resolve().parents[2]
 DIST = ROOT / 'web/dist'
 LEASE_SECONDS = 15
+SERVER_NAME = 'AIRFORM-Astra-Python'
 
 
 def pack_frame(bgr, depth, metadata):
@@ -44,8 +48,9 @@ class CaptureManager:
     before another session can open; stale stop/frame requests cannot affect a
     new session. A closed/crashed browser loses its lease and releases hardware.
     """
-    def __init__(self, factory=IsolatedAstra, lease_seconds=LEASE_SECONDS):
+    def __init__(self, factory=IsolatedAstra, lease_seconds=LEASE_SECONDS, tracked=False):
         self.factory, self.lease_seconds = factory, lease_seconds
+        self.tracked = tracked
         self.lock = threading.RLock()
         self.changed = threading.Condition(self.lock)
         self.lifecycle = threading.Lock()
@@ -56,7 +61,11 @@ class CaptureManager:
         self.sequence = 0
         self.captured_at = 0
 
-    def start(self):
+    def start(self, mode='VIDEO', delegate='GPU'):
+        if mode not in ('VIDEO', 'IMAGE'):
+            raise ValueError('Invalid Astra inference mode')
+        if delegate not in ('GPU', 'CPU'):
+            raise ValueError('Invalid Astra inference device')
         with self.lifecycle:
             with self.changed:
                 if self.thread and self.thread.is_alive():
@@ -66,7 +75,8 @@ class CaptureManager:
                 self.stop_event = threading.Event()
                 self.ready = threading.Event()
                 self.last_request = time.monotonic()
-                self.thread = threading.Thread(target=self._capture, name='astra-capture', daemon=True)
+                self.thread = threading.Thread(target=self._capture, args=(mode, delegate),
+                                               name='astra-capture', daemon=True)
                 self.thread.start()
             if not self.ready.wait(32):
                 self.stop_event.set()
@@ -77,10 +87,11 @@ class CaptureManager:
                 self.last_request = time.monotonic()
                 return {'session': self.session, **self.metadata}
 
-    def _capture(self):
+    def _capture(self, mode, delegate):
         camera = None
         try:
-            camera = self.factory()
+            tracker = GpuHandTracker if delegate == 'GPU' else HandTracker
+            camera = TrackedAstra(self.factory, mode, tracker) if self.tracked else self.factory()
             with self.changed:
                 self.last_request = time.monotonic()
                 self.metadata = {**camera.registration.metadata, 'device': camera.info}
@@ -88,7 +99,7 @@ class CaptureManager:
                 if time.monotonic() - self.last_request > self.lease_seconds:
                     raise RuntimeError('Astra session expired; camera released')
                 bgr, depth, timing = camera.read()
-                sequence = self.sequence + 1
+                sequence = timing.get('sequence', self.sequence + 1)
                 packet = pack_frame(bgr, depth, {**self.metadata, **timing, 'sequence': sequence})
                 with self.changed:
                     self.packet, self.sequence = packet, sequence
@@ -145,6 +156,8 @@ def handler_for(manager, directory, port):
     allowed_hosts = {f'127.0.0.1:{port}', f'localhost:{port}'}
 
     class Handler(SimpleHTTPRequestHandler):
+        server_version = SERVER_NAME
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(directory), **kwargs)
 
@@ -155,13 +168,16 @@ def handler_for(manager, directory, port):
             return True
 
         def _send(self, data, content_type='application/json', status=200):
-            self.send_response(status)
-            self.send_header('Content-Type', content_type)
-            self.send_header('Content-Length', str(len(data)))
-            self.send_header('Cache-Control', 'no-store')
-            self.send_header('X-Content-Type-Options', 'nosniff')
-            self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.send_response(status)
+                self.send_header('Content-Type', content_type)
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                self.close_connection = True
 
         def _json(self, data, status=200):
             self._send(json.dumps(data).encode(), status=status)
@@ -177,10 +193,7 @@ def handler_for(manager, directory, port):
                 except (RuntimeError, ValueError, PermissionError) as error:
                     self._json({'error': str(error)}, 409)
                     return
-                try:
-                    self._send(packet or b'', 'application/octet-stream', 200 if packet else 204)
-                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                    self.close_connection = True
+                self._send(packet or b'', 'application/octet-stream', 200 if packet else 204)
             elif route.path.startswith('/api/'):
                 self.send_error(404)
             else:
@@ -203,7 +216,7 @@ def handler_for(manager, directory, port):
                 if not isinstance(body, dict):
                     raise ValueError('Expected a JSON object')
                 if self.path == '/api/astra/start':
-                    self._json(manager.start())
+                    self._json(manager.start(body.get('inference', 'VIDEO'), body.get('delegate', 'GPU')))
                 elif self.path == '/api/astra/stop':
                     manager.stop(body.get('session'))
                     self._json({'stopped': True})
@@ -258,19 +271,31 @@ class WorkshopServer(ThreadingHTTPServer):
         super().server_bind()
 
 
+def experiment_is_running(port):
+    connection = HTTPConnection('127.0.0.1', port, timeout=1)
+    try:
+        connection.request('GET', '/astra-python-ready.svg')
+        response = connection.getresponse()
+        return response.status == 200 and response.getheader('Server', '').split(' ', 1)[0] == SERVER_NAME
+    except (OSError, HTTPException):
+        return False
+    finally:
+        connection.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--openni-dir')
     parser.add_argument('--uri')
     parser.add_argument('--color-index', type=int)
     parser.add_argument('--color-mirrored', action='store_true', help='Unmirror firmware-mirrored UVC input before registration')
-    parser.add_argument('--port', type=int, default=None)
+    parser.add_argument('--port', type=int, default=4197)
     parser.add_argument('--probe', action='store_true')
     parser.add_argument('--open-browser', action='store_true')
     parser.add_argument('--frames', type=int, default=30)
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
-    if not 1 <= args.frames <= 1000 or (args.port is not None and not 1024 <= args.port <= 65535):
+    if not 1 <= args.frames <= 1000 or not 1024 <= args.port <= 65535:
         parser.error('frames must be 1..1000; port must be 1024..65535')
     options = dict(openni_dir=args.openni_dir, uri=args.uri, color_index=args.color_index,
                    color_mirrored=args.color_mirrored)
@@ -286,18 +311,19 @@ def main():
         return
     if not (DIST / 'index.html').is_file():
         parser.error('Build the frontend first: npm --prefix web run build')
-    manager = CaptureManager(partial(IsolatedAstra, **options))
-    ports = [args.port] if args.port is not None else [4187, 4188]
-    for port in ports:
-        try:
-            server = WorkshopServer(('127.0.0.1', port), handler_for(manager, DIST, port))
-            break
-        except OSError as exc:
-            if port == ports[-1] or exc.errno not in (48, 98, 10013, 10048):
-                raise
-    print(f'AIRFORM Astra: http://127.0.0.1:{port}/?input=astra (camera opens only after Start)', flush=True)
+    manager = CaptureManager(partial(IsolatedAstra, **options), tracked=True)
+    port = args.port
+    url = f'http://127.0.0.1:{port}/?input=astra'
+    try:
+        server = WorkshopServer(('127.0.0.1', port), handler_for(manager, DIST, port))
+    except OSError:
+        if not args.open_browser or not experiment_is_running(port):
+            raise
+        webbrowser.open(url)
+        return
+    print(f'AIRFORM Astra Python: {url} (camera opens only after Start)', flush=True)
     if args.open_browser:
-        webbrowser.open(f'http://127.0.0.1:{port}/?input=astra')
+        webbrowser.open(url)
     try:
         server.serve_forever(poll_interval=.2)
     except KeyboardInterrupt:

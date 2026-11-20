@@ -26,9 +26,9 @@ export function unpackAstraFrame(buffer) {
 }
 
 export class AstraSession {
-  constructor({ detect, stopped, preview, post = requestAstra, get = (url, signal) => fetch(url, { cache: 'no-store', signal }),
+  constructor({ detect, stopped, preview, inference = 'VIDEO', delegate = 'GPU', post = requestAstra, get = (url, signal) => fetch(url, { cache: 'no-store', signal }),
     decode = blob => createImageBitmap(blob) }) {
-    Object.assign(this, { detect, stopped, preview, post, get, decode });
+    Object.assign(this, { detect, stopped, preview, inference, delegate, post, get, decode });
     this.generation = 0;
     this.running = false;
     this.session = null;
@@ -44,7 +44,13 @@ export class AstraSession {
       // A prior inference may still own the single shared Worker request.
       await Promise.allSettled([this.inflight]);
       if (!current()) return false;
-      const loaded = await this.post('start');
+      const opening = this.opening = this.post('start', { inference: this.inference, delegate: this.delegate }).then(async loaded => {
+        if (current()) return loaded;
+        await this.post('stop', { session: loaded.session }, true);
+        return null;
+      });
+      const loaded = await opening.finally(() => { if (this.opening === opening) this.opening = null; });
+      if (!loaded) return false;
       token = loaded.session;
       if (!current()) { await this.post('stop', { session: token }, true); return false; }
       this.session = token;
@@ -115,12 +121,13 @@ export class AstraSession {
     this.controller?.abort(); this.controller = null;
     const token = this.session;
     this.session = null;
-    if (token) this.releasing = this.post('stop', { session: token }, true).then(() => {
+    const release = token ? this.post('stop', { session: token }, true) : this.opening;
+    if (release) this.releasing = release.then(() => {
       if (generation === this.generation) this.stopped(`${message}；设备已释放`);
     }).catch(error => {
       if (generation === this.generation) this.stopped(`Astra 释放未确认：${error.message}；服务会在租约超时后释放`);
     });
-    this.stopped(token ? `${message}；正在释放设备` : message);
+    this.stopped(release ? `${message}；正在释放设备` : message);
     return this.releasing;
   }
 }

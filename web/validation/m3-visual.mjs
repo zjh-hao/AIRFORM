@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 const stage=process.argv[2];
-if(!['m4','launcher','library','webcam-live','astra-live','camera-replay','hand-frame'].includes(stage))throw new Error('Unknown validation stage');
+if(!['m4','launcher','library','webcam-live','astra-live','astra-ab','camera-replay','hand-frame'].includes(stage))throw new Error('Unknown validation stage');
 const replay=stage==='camera-replay';
 if(replay && !process.env.KINEGLOW_Y4M)throw Error('Set KINEGLOW_Y4M to a local 30 fps Y4M input');
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -44,15 +44,15 @@ try {
   };
   await call('Runtime.enable');await call('Page.enable');
   await call('Emulation.setDeviceMetricsOverride',{width:1920,height:1080,deviceScaleFactor:1,mobile:false});
-  const origin = process.env.AIRFORM_URL ?? 'http://127.0.0.1:4187/';
+  const origin = process.env.AIRFORM_URL ?? 'http://127.0.0.1:4197/';
   const defaultUrl = stage === 'launcher' ? new URL('../../AIRFORM.html',import.meta.url).href : origin;
   if (stage === 'launcher') {
     // Exercise the cold-start controls without interrupting a running camera session.
     await call('Network.enable');
-    await call('Network.setBlockedURLs', {urls: ['*workshop-ready.svg*']});
+    await call('Network.setBlockedURLs', {urls: ['*astra-python-ready.svg*']});
     await call('Page.navigate', {url: defaultUrl});
     for (let i=0; i<30 && !await evaluate("document.querySelector('#launch')?.hidden === false"); i++) await wait(100);
-    if (!await evaluate("location.protocol === 'file:' && document.querySelector('#launch')?.href === 'airform-workshop://start' && !document.querySelector('#launch').hidden"))
+    if (!await evaluate("location.protocol === 'file:' && document.querySelector('#launch')?.href === 'airform-astra-python://start' && !document.querySelector('#launch').hidden"))
       throw Error('The stopped service did not expose its launch control');
     if (!await evaluate("document.title.includes('AIRFORM') && document.querySelector('h1 img')?.naturalWidth > 0"))
       throw Error('The local launcher did not load the AIRFORM identity');
@@ -64,15 +64,16 @@ try {
     const {checkLibrary} = await import('./effect-library.mjs');
     await checkLibrary({evaluate,call});
   } else if (stage === 'launcher') {
-    for (let i=0; i<150 && !await evaluate("document.querySelector('#backend')?.textContent.includes('Worker')"); i++) await wait(100);
-    if (!await evaluate("[4187,4188].includes(Number(location.port)) && location.hostname === '127.0.0.1' && document.querySelector('#backend')?.textContent.includes('Worker')"))
-      throw Error('Launcher did not enter the public workshop: '+await evaluate("location.href + ' ' + document.querySelector('#status')?.textContent"));
-    if (!await evaluate(`document.title === 'AIRFORM · 虚拟特效工坊' &&
+    if (!await evaluate(`location.origin === 'http://127.0.0.1:4197' &&
+      document.querySelector('#input-source')?.value === 'astra' &&
+      document.querySelector('#backend')?.textContent.includes('Python GPU · DirectML')`))
+      throw Error('Launcher did not enter the Python GPU workshop: '+await evaluate("location.href + ' ' + document.querySelector('#status')?.textContent"));
+    if (!await evaluate(`document.title === 'AIRFORM · Astra Python GPU' &&
       document.querySelector('#home b').textContent === 'AIRFORM' &&
       document.querySelector('#home img').naturalWidth > 0 &&
       document.querySelector('link[rel=icon]').href === document.querySelector('#home img').src`))
       throw Error('The workshop did not load the AIRFORM header and tab icon');
-    console.log('AIRFORM launcher, workshop header and tab icon passed in Edge.');
+    console.log('AIRFORM local HTML entered Astra Python GPU on port 4197 in Edge.');
   } else if(stage==='hand-frame'){
     const {probe}=await import('./probe-hand-frame.mjs');
     await probe(evaluate);
@@ -118,10 +119,14 @@ try {
       }finally{document.querySelector('#stop').click();}
     })()`);
     console.log('Physical camera (no captures):',info);
+  }else if(stage==='astra-ab'){
+    const { astraAB } = await import('./astra-ab.mjs');
+    await astraAB(evaluate);
+    if(errors.length)throw Error(errors.join('\n'));
   }else if(stage==='astra-live'){
     await evaluate(`document.querySelector('#input-source').value='astra';
       document.querySelector('#input-source').dispatchEvent(new Event('change'))`);
-    for(let retry=0;retry<150 && await evaluate("document.querySelector('#start').disabled || !document.querySelector('#backend').textContent.includes('Worker')");retry++)await wait(100);
+    for(let retry=0;retry<150 && await evaluate("document.querySelector('#start').disabled");retry++)await wait(100);
     await evaluate(`window.liveSample=[];window.addEventListener('kineglow:hands',({detail})=>{
       if(detail.source==='摄像头')liveSample.push({at:performance.now(),sequence:detail.depthFrame.sequence,hand:!!detail.landmarks.length});
     });document.querySelector('#start').click()`);

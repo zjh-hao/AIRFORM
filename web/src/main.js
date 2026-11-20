@@ -36,7 +36,7 @@ smoothing.addEventListener('input', updateStrength);
 updateStrength();
 input.value = new URLSearchParams(location.search).get('input') === 'astra' ? 'astra' : 'webcam';
 function activeSession() { return input.value === 'astra' ? astraSession : session; }
-let detector, busy = false, disposed = false, frames = 0, handsFrames = 0, lastTimestamp = -1;
+let detector, detectorLoading, browserBackend = '', busy = false, disposed = false, frames = 0, handsFrames = 0, lastTimestamp = -1;
 let inferenceTotal = 0, inferenceMax = 0, received = 0, cleanupScene;
 let cameraRequest = 0, starting = false;
 let validation;
@@ -53,13 +53,13 @@ function cameraLayout(active) {
 }
 let pipelineTotal = 0, pipelineMax = 0, delegate = '';
 function controls() {
-  start.disabled = disposed || !detector || !delegate || busy || activeSession().running;
-  fixture.disabled = start.disabled;
-  if (location.protocol === 'file:' && input.value === 'astra') start.disabled = true;
+  const astra = input.value === 'astra';
+  start.disabled = disposed || busy || activeSession().running || (astra ? location.protocol === 'file:' : !delegate);
+  fixture.disabled = disposed || busy || activeSession().running;
   stop.disabled = disposed || (!starting && !activeSession().running);
   input.disabled = busy || starting || session.running || astraSession.running;
   $('#mouse-mode').disabled=input.disabled || !cleanupScene;
-  start.textContent=starting?'正在连接…':activeSession().running?'设备已连接':!delegate?'加载模型…':'启动摄像头';
+  start.textContent=starting?'正在连接…':activeSession().running?'设备已连接':!astra&&!delegate?'加载模型…':'启动摄像头';
 }
 function publish(result, timestamp, source) {
   window.dispatchEvent(new CustomEvent('kineglow:hands', { detail: { ...result, timestamp, source } }));
@@ -98,6 +98,9 @@ projectPoint.motionStatus = () => input.value === 'astra' ? depthProjector.sampl
 projectPoint.cursorPoint = () => input.value === 'astra' ? depthProjector.cursorPoint : planeProjector.cursorPoint;
 const gestureMode = new URLSearchParams(location.search).get('tracking') === 'legacy' ? 'legacy' : 'world';
 const runningMode = new URLSearchParams(location.search).get('inference') === 'image' ? 'IMAGE' : 'VIDEO';
+const astraDelegate = new URLSearchParams(location.search).get('delegate') === 'CPU' ? 'CPU' : 'GPU';
+let astraBackend = astraDelegate === 'GPU' ? 'Python GPU · DirectML' : 'Python CPU';
+const astraMode = runningMode === 'IMAGE' ? 'IMAGE 逐帧图片识别' : 'VIDEO 视频跟踪';
 const disconnectInteraction = connectInteraction(window, () => ({ width: canvas.width, height: canvas.height }), projectPoint, { gestureMode });
 function depthSampleText(sample) {
   const mm = (sample.z * 1000).toFixed(0);
@@ -171,12 +174,21 @@ async function detect(source, current = () => !disposed, label = '摄像头', de
   if (!current()) { bitmap.close(); return; }
   sizeCamera(bitmap.width,bitmap.height);
   if (!frames) context.drawImage(bitmap, 0, 0);
-  const response = await detector.request({ type: 'detect', bitmap, timestamp, live: label === '摄像头', firstFrame: frames === 0 }, [bitmap]);
+  const tracking = depthFrame?.tracking;
+  if (depthFrame && !tracking) throw new Error('当前 Astra 服务没有 Python 识别结果');
+  const response = tracking ? { result: tracking, elapsed: tracking.inferenceMs, bitmap }
+    : await detector.request({ type: 'detect', bitmap, timestamp, live: label === '摄像头', firstFrame: frames === 0 }, [bitmap]);
   try {
     if (!current()) return;
-    const { result, elapsed } = response;
-    if(response.recoveryError) $('#backend').textContent = delegate + ' Worker · CPU 复核不可用，继续主识别';
-    if (!depthFrame || document.body.dataset.effect==='solar') context.drawImage(response.bitmap, 0, 0);
+    const { elapsed } = response;
+    const { landmarks, worldLandmarks, handedness } = response.result;
+    const result = { landmarks, worldLandmarks, handedness };
+    if (tracking && (frames === 0 || astraBackend !== depthFrame.tracking_backend)) {
+      astraBackend = depthFrame.tracking_backend;
+      $('#backend').textContent = `${astraBackend} · ${astraMode}`;
+    }
+    if(response.recoveryError && input.value === 'webcam') $('#backend').textContent = delegate + ' Worker · CPU 复核不可用，继续主识别';
+    context.drawImage(response.bitmap, 0, 0);
     frames++; handsFrames += Number(result.landmarks.length > 0);
     inferenceTotal += elapsed; inferenceMax = Math.max(inferenceMax, elapsed);
     clearSkeleton();
@@ -199,12 +211,14 @@ async function detect(source, current = () => !disposed, label = '摄像头', de
       lastDiagnosticAt = arrival;
       const hz = frames > 1 ? ((frames-1)*1000/(timestamp-firstSampleAt)).toFixed(1) : '--';
       const gap95=[...frameGaps].sort((left,right)=>left-right)[Math.ceil(frameGaps.length*.95)-1];
-      $('#tracking').textContent = `推理帧 ${frames} / 有手帧 ${handsFrames} / 有效采样 ${hz} Hz\n推理 本帧 ${elapsed.toFixed(1)} / 平均 ${(inferenceTotal / frames).toFixed(1)} / 最大 ${inferenceMax.toFixed(1)} ms\n${delegate} Worker / 采样至叠加 本帧 ${pipeline.toFixed(1)} / 平均 ${(pipelineTotal / frames).toFixed(1)} / 最大 ${pipelineMax.toFixed(1)} ms（非端到端延迟）\n最近输出间隔 P95 ${gap95?.toFixed(1) ?? '--'} ms（含取帧、推理与调度）`;
+      const stage = tracking ? `${astraBackend} / 本帧预处理 ${tracking.preprocessMs.toFixed(1)} ms / 浏览器接收后至骨架 ${pipeline.toFixed(1)} ms`
+        : `${delegate} Worker / 采样至叠加 本帧 ${pipeline.toFixed(1)} / 平均 ${(pipelineTotal / frames).toFixed(1)} / 最大 ${pipelineMax.toFixed(1)} ms`;
+      $('#tracking').textContent = `推理帧 ${frames} / 有手帧 ${handsFrames} / 有效采样 ${hz} Hz\n推理 本帧 ${elapsed.toFixed(1)} / 平均 ${(inferenceTotal / frames).toFixed(1)} / 最大 ${inferenceMax.toFixed(1)} ms\n${stage}（非端到端延迟）\n最近输出间隔 P95 ${gap95?.toFixed(1) ?? '--'} ms（含取帧、推理与调度）`;
       if(response.recovered) $('#tracking').append(' · 本帧骨架来自 CPU 复核');
     }
     const detail={...result,depthFrame,timestamp,source:label};
     publish(detail, timestamp, label);
-    await validation?.record(detail,{inferenceMs:elapsed,sampleToOverlayMs:pipeline});
+    await validation?.record(detail,{inferenceMs:elapsed,...(tracking ? {} : {sampleToOverlayMs:pipeline})});
     return result;
   } finally { response.bitmap.close(); }
 }
@@ -216,11 +230,7 @@ const session = new CameraSession({ video,
   detect,
   stopped,
 });
-const astraSession = new AstraSession({ detect, stopped, preview(bitmap) {
-  if (document.body.dataset.effect==='solar') return;
-  sizeCamera(bitmap.width,bitmap.height);
-  context.drawImage(bitmap,0,0);
-} });
+const astraSession = new AstraSession({ detect, stopped, inference: runningMode, delegate: astraDelegate });
 function stopped(message) {
   cameraLayout(false);
   void validation?.stopRecording();
@@ -253,7 +263,10 @@ function drawDepth(frame) {
 }
 function describeInput() {
   const astra = input.value === 'astra';
-  $('#preview .pane-title').textContent = `01　/　实景追踪 · ${astra?'Astra RGB-D':'普通摄像头'}`;
+  document.title = astra ? `AIRFORM · Astra Python ${astraDelegate}` : 'AIRFORM · 虚拟特效工坊';
+  $('#preview .pane-title').textContent = `01　/　实景追踪 · ${astra?'Astra RGB-D · Python':'普通摄像头'}`;
+  $('#backend').textContent = astra ? `${astraBackend} · ${astraMode}（启动后确认）`
+    : browserBackend || '正在加载浏览器模型…';
   const switchLink = $('#inference-switch');
   const target = new URL(location.href);
   target.searchParams.set('inference', runningMode === 'IMAGE' ? 'video' : 'image');
@@ -272,7 +285,10 @@ function describeInput() {
     ? `Astra RGB-D · 固定绘画倍率 ${DRAWING_GAIN.multiplier.toFixed(2)}× · XY 按手掌尺度归一化，深度只控制 Z`
     : `普通摄像头 · 固定绘画倍率 ${DRAWING_GAIN.multiplier.toFixed(2)}× · 按手掌尺度归一化的平面绘画`;
 }
-input.addEventListener('change', () => { describeInput(); stopped('输入已切换，请启动摄像头并先张开右手'); });
+input.addEventListener('change', () => {
+  describeInput(); stopped('输入已切换，请启动摄像头并先张开右手');
+  if (input.value === 'webcam') void prepareBrowserInput();
+});
 describeInput();
 window.addEventListener('kineglow:effect', describeInput);
 function resetMetrics() {
@@ -329,6 +345,7 @@ fixture.addEventListener('click', async () => {
     const image = new Image();
     image.src = assetUrl('/assets/woman_hands.jpg');
     await image.decode();
+    await loadBrowserDetector();
     await Promise.allSettled([session.inflight, astraSession.inflight]);
     if (disposed) return;
     resetMetrics();
@@ -353,7 +370,8 @@ window.addEventListener('pagehide', () => {
 });
 window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 validation=installValidationPanel({
-  getMetadata:()=>({width:canvas.width,height:canvas.height,input:input.value,delegate,runningMode}),
+  getMetadata:()=>({width:canvas.width,height:canvas.height,input:input.value,
+    delegate:input.value === 'astra' ? astraBackend : delegate,runningMode}),
   isRunning:()=>activeSession().running,
   async onReplayStart(data) {
     ++cameraRequest;starting=false;busy=true;controls();
@@ -379,19 +397,34 @@ try {
   $('#mouse-mode').disabled=false;
 }
 catch (error) { $('#scene-status').textContent = `场景初始化失败：${error.message}`; console.error(error); }
-try {
-  status.textContent = '正在加载本地模型…';
-  detector = new DetectorWorker(new Worker(assetUrl('/tracking-worker.js')));
-  const sensitive = runningMode==='VIDEO';
-  const loaded = await detector.request({ type: 'init', runningMode, sensitive, delegate: new URLSearchParams(location.search).get('delegate') === 'CPU' ? 'CPU' : 'GPU' });
-  if (!disposed) {
-    delegate = loaded.delegate;
-    $('#backend').textContent = `${delegate} Worker · ${loaded.runningMode === 'IMAGE' ? 'IMAGE 逐帧图片识别' : 'VIDEO 视频跟踪'} · 单帧在途${loaded.fallback ? '（GPU 初始化失败，已回退 CPU）' : ''}`;
-    if(loaded.recoveryReady) $('#backend').append(' · 连续漏检时 CPU 复核');
-    else if(loaded.recoveryError) $('#backend').append(' · CPU 复核不可用');
-    status.textContent = '本地模型已就绪'; controls();
+function loadBrowserDetector() {
+  if (!detectorLoading) {
+    detector = new DetectorWorker(new Worker(assetUrl('/tracking-worker.js')));
+    detectorLoading = detector.request({ type: 'init', runningMode, sensitive: runningMode === 'VIDEO',
+      delegate: new URLSearchParams(location.search).get('delegate') === 'CPU' ? 'CPU' : 'GPU' }).then(loaded => {
+      delegate = loaded.delegate;
+      browserBackend = `${delegate} Worker · ${loaded.runningMode === 'IMAGE' ? 'IMAGE 逐帧图片识别' : 'VIDEO 视频跟踪'} · 单帧在途${loaded.fallback ? '（GPU 初始化失败，已回退 CPU）' : ''}`;
+      if (loaded.recoveryReady) browserBackend += ' · 连续漏检时 CPU 复核';
+      else if (loaded.recoveryError) browserBackend += ' · CPU 复核不可用';
+    }).catch(error => {
+      detector?.close(); detector = null; detectorLoading = null;
+      throw error;
+    });
   }
-} catch (error) {
-  detector?.close(); detector = null;
-  if (!disposed) status.textContent = `模型加载失败：${error.message}`;
+  return detectorLoading;
 }
+async function prepareBrowserInput() {
+  status.textContent = '正在加载本地模型…';
+  try {
+    await loadBrowserDetector();
+    if (!disposed && input.value === 'webcam') {
+      $('#backend').textContent = browserBackend;
+      status.textContent = '本地模型已就绪'; controls();
+    }
+  } catch (error) {
+    if (!disposed && input.value === 'webcam') status.textContent = `模型加载失败：${error.message}`;
+  }
+}
+controls();
+if (input.value === 'webcam') void prepareBrowserInput();
+else status.textContent = '点击启动摄像头，连接 Astra 并加载 Python 模型';

@@ -5,6 +5,7 @@
 | [model-selection](model-selection/method.md) | 同一段画面上，几种识别路线的输出与耗时如何？ |
 | [hand-tracking](hand-tracking/method.md) | 真实采集、快动作回放和短时漏检有哪些差异？ |
 | [depth-and-continuity](depth-and-continuity/method.md) | 融合深度以及稳定光标的计算代价和效果如何？ |
+| [Astra Python 快扫对照](performance/astra-python-replay.csv) | 同一段快扫回放中，Python DirectML 和 MediaPipe Tasks CPU 的推理、光标延迟及遮挡重获如何？实验条件见 [验证记录](../docs/astra-python-ab.md)。 |
 | performance | frame-timing.csv 比较历史增强版 10 秒回放的输出和预览间隔。brush-rendering.csv 比较同一桌面合成绘画实验的 120 个渲染帧。 |
 | sample | 可直接在工坊中播放的合成手势 JSON。 |
 | methods | 研究参考、从数值记录生成汇总的脚本。 |
