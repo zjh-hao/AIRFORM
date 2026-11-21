@@ -1,4 +1,4 @@
-"""Serve the real AIRFORM frontend with a physical camera or a repeatable RGB-D input."""
+"""Run AIRFORM tracking comparisons with a physical Astra or repeatable RGB-D frames."""
 import argparse
 import math
 from pathlib import Path
