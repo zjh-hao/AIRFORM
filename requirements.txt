@@ -1,4 +1,4 @@
-# Python dependencies for the local Astra service and hand tracking.
+# Pinned runtime dependencies for Astra capture and hand inference on Windows.
 numpy==2.0.2
 opencv-contrib-python==4.13.0.92
 cv2-enumerate-cameras==1.3.1
