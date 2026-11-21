@@ -1,1 +1,1 @@
-"""AIRFORM local workshop service and Astra RGB-D hand tracking."""
+"""Local workshop service, Astra RGB-D capture and hand tracking."""
