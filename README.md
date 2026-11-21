@@ -2,7 +2,7 @@
 
 用手势在空气中绘制三维光轨，也可以让银河、精密仪器或自己的模型悬浮于掌心。AIRFORM 面向 Windows x64 桌面。Astra Pro Plus 的手部识别默认由 Python 通过 DirectML 在 GPU 上运行，Three.js 负责绘画渲染。
 
-## 首次运行
+## 安装与首次运行
 
 1. 克隆本仓库，按 [requirement.md](requirement.md) 安装 Python 3.12 x64、Node.js 24（含 npm），并准备 Edge 或 Chrome。Astra 用户另装匹配的 OpenNI2 x64 驱动与插件。
 2. 双击 [setup/install.cmd](setup/install.cmd) 完成一次性安装。
