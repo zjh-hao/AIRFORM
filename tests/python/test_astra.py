@@ -1,4 +1,4 @@
-"""Hardware-free tests for Astra calibration, tracking, camera sessions and HTTP requests."""
+"""Test Astra calibration, tracking, camera sessions and HTTP requests without hardware."""
 import http.client
 import json
 import struct
