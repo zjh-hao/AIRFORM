@@ -1,3 +1,4 @@
+# Local environments and generated files
 /.venv/
 /.cache/
 /local-output/
