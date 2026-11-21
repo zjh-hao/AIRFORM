@@ -1,4 +1,4 @@
-"""Hardware-free tests: calibration geometry, ownership, lease and HTTP boundary."""
+"""Hardware-free tests for Astra calibration, tracking, camera sessions and HTTP requests."""
 import http.client
 import json
 import struct
