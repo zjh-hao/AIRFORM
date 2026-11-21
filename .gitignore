@@ -1,4 +1,4 @@
-# Local environments and generated files
+# Local environments, build output and camera recordings
 /.venv/
 /.cache/
 /local-output/
