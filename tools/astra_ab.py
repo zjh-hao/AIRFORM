@@ -1,4 +1,4 @@
-"""Run AIRFORM tracking comparisons with a physical Astra or repeatable RGB-D frames."""
+"""Serve live Astra input or repeatable RGB-D frames for tracking benchmarks."""
 import argparse
 import math
 from pathlib import Path
