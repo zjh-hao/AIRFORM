@@ -1,3 +1,4 @@
+# One-time setup for the local Windows workshop.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location -LiteralPath $root
