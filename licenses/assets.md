@@ -1,6 +1,6 @@
 # 作品素材来源与使用许可
 
-网页使用本地 WebP 图集，原始 GLB 位于 `assets/holograms/`。每件素材及其衍生图集保留各自的作者和使用条件。
+网页使用本地 WebP 图集，原始 GLB 位于 [`assets/holograms/`](../assets/holograms/)。每件素材及其衍生图集保留各自的作者和使用条件。
 
 ## 掌上全息写实科技素材
 
