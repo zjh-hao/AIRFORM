@@ -1,4 +1,4 @@
-# One-time setup for the local Windows workshop.
+# Install workshop dependencies, prepare models and register the Windows launcher.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location -LiteralPath $root
