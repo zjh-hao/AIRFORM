@@ -1,4 +1,4 @@
-# Third-party sources and licenses
+# AIRFORM third-party sources, licenses and credits
 
 - `@mediapipe/tasks-vision@1.1.1`: official npm package, https://www.npmjs.com/package/@mediapipe/tasks-vision . Registry tarball URL, integrity and Apache-2.0 metadata are pinned in `web/package-lock.json`. JS and WASM are used unmodified. MediaPipe source: https://github.com/google-ai-edge/mediapipe ; full Apache-2.0 license reused from `licenses/LICENSE.mediapipe` and included in production output.
 - Model: existing `assets/models/hand_landmarker.task`, official float16/version 1, https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task . Size 7,819,105 bytes; SHA-256 `fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1`. No new model download. The existing research record identifies Apache-2.0 in the official linked [Hand Tracking model card](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Hand%20Tracking%20%28Lite_Full%29%20with%20Fairness%20Oct%202021.pdf); preserve that provenance, rather than treating the code license as proof of asset licensing.
