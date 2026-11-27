@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { HandInteraction } from '../src/interaction.js';
 import { HandGesture, worldGeometry } from '../src/hand-geometry.js';
 import { CursorFilter } from '../src/cursor-filter.js';
-import { DrawingPlane, imageDrawingFrame } from '../src/drawing-gain.js';
+import { DrawingGain, DrawingPlane, imageDrawingFrame } from '../src/drawing-gain.js';
+import { DepthProjector } from '../src/depth-point.js';
+import { rgbdHand } from '../test-support/rgbd-hand.js';
 import { worldHand, armWorld } from '../test-support/world-hand.js';
 
 test('M1: short conflicting depth opening pauses ink and returns to the same pinch',()=>{
@@ -159,4 +161,43 @@ test('M1: coherent slow motion raises the same filter cutoff and stays below 70 
       if(i>30)assert.ok((x-output.x)/speed*1000<70);
     }
   }
+});
+
+test('M1: foreshortened pose clamps palm scale, freezes boneLengths, and damps single-frame jumps',()=>{
+  const normalGain=new DrawingGain(),foreGain=new DrawingGain();
+  const base=rgbdHand({root:.8,shiftX:0,mode:'all'});
+  normalGain.project(base.tip,base.frame,base.hand,undefined,{foreshortened:false});
+  foreGain.project(base.tip,base.frame,base.hand,undefined,{foreshortened:false});
+  const savedBones=[...foreGain.boneLengths];
+
+  // Simulate sudden foreshortening where apparent 3D bone[1] shrinks sharply (high root spike).
+  const shifted=rgbdHand({root:.8,shiftX:.08,mode:'all'});
+  const spikedPose={bones:[0.05,0.03,0.04,0.04,0.04,0.04],points:Array.from({length:21},(_,i)=>({x:0,y:0,z:i===8?1.8:1}))};
+  const outNormal=normalGain.project(shifted.tip,shifted.frame,shifted.hand,spikedPose,{foreshortened:false});
+  const outFore=foreGain.project(shifted.tip,shifted.frame,shifted.hand,spikedPose,{foreshortened:true});
+  assert.deepEqual(foreGain.boneLengths,savedBones);
+  assert.equal(foreGain.mode,'palm-foreshortened');
+  assert.ok(Math.abs(outFore.x)<Math.abs(outNormal.x));
+
+  // CursorFilter intercepts moderate 0.6-palm spike when foreshortened (outlierLimit 0.45 vs normal 1.0).
+  const cfNormal=new CursorFilter(),cfFore=new CursorFilter();
+  cfNormal.update({x:0,y:0,z:0},0);cfFore.update({x:0,y:0,z:0},0);
+  cfNormal.update({x:.02,y:0,z:0},33);cfFore.update({x:.02,y:0,z:0},33);
+  const jumpNormal=cfNormal.update({x:.62,y:0,z:0},66,{foreshortened:false});
+  const jumpFore=cfFore.update({x:.62,y:0,z:0},66,{foreshortened:true});
+  assert.equal(cfFore.status,'outlier-held');
+  assert.ok(jumpFore.x<jumpNormal.x);
+
+  // DepthProjector damps XY and Z excursions on a foreshortened frame compared to normal.
+  const dpNormal=new DepthProjector(),dpFore=new DepthProjector();
+  for(let i=0;i<10;i++){
+    const f=rgbdHand({root:.9,mode:'all'});
+    dpNormal.project(f.tip,f.frame,f.hand,i*33,{foreshortened:false});
+    dpFore.project(f.tip,f.frame,f.hand,i*33,{foreshortened:false});
+  }
+  const jump=rgbdHand({root:.9,shiftX:.08,mode:'all'});
+  jump.frame.depth.fill(1150);
+  const resNormal=dpNormal.project(jump.tip,jump.frame,jump.hand,330,{foreshortened:false});
+  const resFore=dpFore.project(jump.tip,jump.frame,jump.hand,330,{foreshortened:true});
+  assert.ok(Math.abs(resFore.x)<Math.abs(resNormal.x));
 });

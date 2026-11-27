@@ -14,6 +14,9 @@ import { StrokeEngine } from './stroke-engine.js';
 import {cometFlights} from './comet.js';
 import {brushes} from './effect-library.js';
 import { installCanvasTools } from './workstation.js';
+import { DISPLAY_NAMES } from './glyph-3d.js';
+import { descriptorFromModelResult } from './shape-3d.js';
+import { projectStrokeForModel, recognizeSketchRemote } from './sketch-client.js';
 
 export function createScene(host, status, metrics, strokeStatus = null, getStrength) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -50,7 +53,7 @@ export function createScene(host, status, metrics, strokeStatus = null, getStren
   scene.add(border, cursor);
   const playback=new CursorPlayback();
   let needsRender = true, lastState = null;
-  const palette=document.getElementById('brush-colors'), glow=document.getElementById('brush-glow');
+  const palette=document.getElementById('brush-colors'), glow=document.getElementById('brush-glow'), shapeToggle=document.getElementById('shape-3d'), smartDrawToggle=document.getElementById('smart-draw');
   const glowStatus=document.getElementById('brush-glow-status');
   let color=BRUSH_COLORS[0][1],composer=null,slowFrames=0,reduced=false,liveInput=false;
   const supported=renderer.extensions.has('EXT_color_buffer_float');
@@ -82,17 +85,166 @@ export function createScene(host, status, metrics, strokeStatus = null, getStren
   const liveQuality=({detail})=>{liveInput=detail;if(glow.value==='auto')configureGlow();};
   window.addEventListener('kineglow:camera-layout',liveQuality);
   const render=()=>composer?composer.render():renderer.render(scene,camera);
-  const flights=cometFlights(scene),engine=new StrokeEngine(flights.launch,flights.trace);
-  const tools=installCanvasTools({engine,renderer,camera,controls,render,redraw:()=>{needsRender=true;}});
-  let lastInkStats;
-  const disconnectDrawing = connectLiveDrawing(window, scene, strokeStatus ? stats => {
-    if(!lastInkStats || stats.active || lastInkStats.active ||
-        stats.strokes!==lastInkStats.strokes || stats.segments!==lastInkStats.segments)needsRender=true;
-    lastInkStats=stats;
-    tools.refresh(stats);
-    strokeStatus.textContent = `已结束 ${stats.strokes} 笔 / ${stats.paused ? '短暂停笔，等待续接' : stats.active ? '正在绘画' : '等待起笔'} / ${stats.segments} 管段 · 自动续接 ${stats.bridges} 次\n`
-      + `收笔原因：深度中断 ${stats.ends.depth} / 丢手超时或远处重现 ${stats.ends.tracking} / 松手判定 ${stats.ends.release} / 大幅重定位 ${stats.ends.jump}`;
-  } : null, getStrength,()=>{const effect=document.body.dataset.effect,accent=brushes[effect]?.accent;return {effect,color:accent||color,size:document.getElementById('brush-size').valueAsNumber*(accent ? .56 : 1),mineral:true};},engine);
+  const flights=cometFlights(scene);
+  let tools = null, shapeToastTimer = null, settleTimer = null, settleEpoch = 0, clearEpoch = 0;
+  let lastInkStats = null, lastLiveStats = null;
+  let recentUnmatched = [];
+  const SKETCH_SETTLE_MS = 950;
+  const MULTI_STROKE_WINDOW_MS = 4500;
+  const cancelPendingSketch = (hard = false) => {
+    clearTimeout(settleTimer);
+    settleTimer = null;
+    settleEpoch++;
+    if (hard) clearEpoch++;
+  };
+  const updateStrokeReadout = (live = null) => {
+    if (live) lastLiveStats = live;
+    const base = lastLiveStats ?? { paused: false, bridges: 0, ends: { depth: 0, tracking: 0, release: 0, stopped: 0, jump: 0 } };
+    const current = { ...engine.stats, ends: base.ends, paused: base.paused, bridges: base.bridges };
+    if (!lastInkStats || current.active || lastInkStats.active ||
+        current.strokes !== lastInkStats.strokes || current.segments !== lastInkStats.segments) {
+      needsRender = true;
+    }
+    lastInkStats = current;
+    if (tools) tools.refresh(current);
+    if (strokeStatus) {
+      strokeStatus.textContent = `已结束 ${current.strokes} 笔 / ${current.paused ? '短暂停笔，等待续接' : current.active ? '正在绘画' : '等待起笔'} / ${current.segments} 管段 · 自动续接 ${current.bridges} 次\n`
+        + `收笔原因：深度中断 ${current.ends.depth} / 丢手超时或远处重现 ${current.ends.tracking} / 松手判定 ${current.ends.release} / 大幅重定位 ${current.ends.jump}`;
+    }
+  };
+  const announceShape = descriptor => {
+    updateStrokeReadout();
+    needsRender = true;
+    const label = descriptor?.displayName || DISPLAY_NAMES[descriptor?.type] || descriptor?.type;
+    const badge = document.getElementById('clear-status');
+    if (label && badge) {
+      clearTimeout(shapeToastTimer);
+      badge.textContent = `已识别：${label} → 3D ${label}`;
+      shapeToastTimer = setTimeout(() => {
+        if (badge.textContent.startsWith('已识别：')) badge.textContent = '';
+      }, 2400);
+    }
+  };
+  const computeBounds2d = pts => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const [x, y] of pts) {
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    return { minX, maxX, minY, maxY };
+  };
+  const unionBounds2d = (a, b) => ({
+    minX: Math.min(a.minX, b.minX), maxX: Math.max(a.maxX, b.maxX),
+    minY: Math.min(a.minY, b.minY), maxY: Math.max(a.maxY, b.maxY),
+  });
+  const boxesNear = (a, b) => {
+    const pad = Math.min(0.28, Math.max(0.14, Math.max(a.maxX - a.minX, a.maxY - a.minY, b.maxX - b.minX, b.maxY - b.minY) * 0.35));
+    return a.minX <= b.maxX + pad && a.maxX >= b.minX - pad && a.minY <= b.maxY + pad && a.maxY >= b.minY - pad;
+  };
+  const runSketchRecognition = async (expectedSettle, expectedClear, style) => {
+    if (disposed || engine.active || expectedSettle !== settleEpoch || expectedClear !== clearEpoch) return;
+    const now = performance.now();
+    recentUnmatched = recentUnmatched.filter(item => now - item.time <= MULTI_STROKE_WINDOW_MS && engine.hasStroke(item.id));
+    if (!recentUnmatched.length) return;
+
+    const latest = recentUnmatched[recentUnmatched.length - 1];
+    const cluster = [latest];
+    let clusterBounds = latest.bounds;
+    for (let i = recentUnmatched.length - 2; i >= 0 && cluster.length < 12; i--) {
+      const prev = recentUnmatched[i];
+      if (latest.time - prev.time <= MULTI_STROKE_WINDOW_MS && boxesNear(clusterBounds, prev.bounds)) {
+        cluster.unshift(prev);
+        clusterBounds = unionBounds2d(clusterBounds, prev.bounds);
+      }
+    }
+
+    const isClosed = items => {
+      const first2d = items[0].points2d[0], last2d = items.at(-1).points2d.at(-1);
+      const b = computeBounds2d(items.flatMap(item => item.points2d));
+      const diag = Math.hypot(b.maxX - b.minX, b.maxY - b.minY);
+      return diag > 1e-4 && Math.hypot(first2d[0] - last2d[0], first2d[1] - last2d[1]) <= diag * 0.28;
+    };
+
+    const useCluster = cluster.length >= 2;
+    const primaryItems = useCluster ? cluster : [latest];
+    const remote = await recognizeSketchRemote({
+      strokes: primaryItems.map(item => item.points2d),
+      closedHint: isClosed(primaryItems),
+      fallbackStrokes: useCluster ? [latest.points2d] : null,
+      fallbackClosedHint: useCluster ? isClosed([latest]) : false,
+    });
+    if (disposed || expectedClear !== clearEpoch) return;
+    const badge = document.getElementById('clear-status');
+    if (!remote) {
+      if (badge && badge.textContent.startsWith('等待补画')) badge.textContent = '';
+      return;
+    }
+    const targetItems = useCluster && remote.usedFallback ? [latest] : primaryItems;
+    const targetIds = targetItems.map(item => item.id);
+    if (!targetIds.every(gid => engine.hasStroke(gid))) return;
+    const descriptor = descriptorFromModelResult(remote, targetItems.map(item => item.points3d));
+    if (!descriptor) return;
+    if (engine.replaceStrokesWithShape(targetIds, descriptor, style)) {
+      const used = new Set(targetIds);
+      recentUnmatched = recentUnmatched.filter(item => !used.has(item.id));
+    }
+  };
+  const handleUnmatchedShape = ({ id, samples, style }) => {
+    if (disposed || !style?.shape3d) return;
+    const points2d = projectStrokeForModel(samples, camera);
+    if (points2d.length < 2) return;
+    const now = performance.now();
+    recentUnmatched = recentUnmatched.filter(item => now - item.time <= MULTI_STROKE_WINDOW_MS && engine.hasStroke(item.id));
+    recentUnmatched.push({ id, points3d: samples, points2d, bounds: computeBounds2d(points2d), time: now });
+    if (recentUnmatched.length > 12) recentUnmatched.shift();
+
+    cancelPendingSketch(false);
+    const expectedSettle = settleEpoch, expectedClear = clearEpoch;
+    const badge = document.getElementById('clear-status');
+    if (badge) {
+      clearTimeout(shapeToastTimer);
+      badge.textContent = '等待补画或识别中…（停顿约 1 秒自动识别）';
+    }
+    settleTimer = setTimeout(() => { void runSketchRecognition(expectedSettle, expectedClear, style); }, SKETCH_SETTLE_MS);
+  };
+  const engine=new StrokeEngine(flights.launch,flights.trace,announceShape,handleUnmatchedShape,() => cancelPendingSketch(false));
+  tools=installCanvasTools({engine,renderer,camera,controls,render,redraw:()=>{needsRender=true;}});
+  let grabbed = null, hovered = null;
+  const grabOffset = new THREE.Vector3();
+  const setShapeEmissive = (shapeObj, delta = 0) => {
+    const targets = shapeObj?.userData?.highlightTargets;
+    if (!Array.isArray(targets)) return;
+    for (const target of targets) {
+      if (!target?.material) continue;
+      if (target.type === 'body') {
+        target.material.emissiveIntensity = target.baseEmissive + delta;
+        target.material.opacity = Math.min(0.82, target.baseOpacity + delta * 0.28);
+      } else if (target.type === 'line') {
+        target.material.opacity = Math.min(1, target.base + delta * 0.45);
+      } else {
+        target.material.emissiveIntensity = target.base + delta;
+      }
+    }
+  };
+  const releaseGrab = () => {
+    if (grabbed) { setShapeEmissive(grabbed, 0); grabbed = null; needsRender = true; }
+  };
+  const clearHover = () => {
+    if (hovered && hovered !== grabbed) setShapeEmissive(hovered, 0);
+    hovered = null;
+  };
+  const findGrabbable = pt => {
+    if (!pt || !engine.shapes.length) return null;
+    let best = null, bestDist = Infinity;
+    for (const mesh of engine.shapes) {
+      const dx = mesh.position.x - pt.x, dy = mesh.position.y - pt.y, dz = mesh.position.z - pt.z;
+      const reach = (mesh.userData?.hitRadius ?? .5) + .65;
+      const d = Math.hypot(dx, dy, dz * .65);
+      if (d <= reach && d < bestDist) { bestDist = d; best = mesh; }
+    }
+    return best;
+  };
+  const disconnectDrawing = connectLiveDrawing(window, scene, updateStrokeReadout, ()=>smartDrawToggle?.checked?Math.max(getStrength(),.78):getStrength(),()=>{const effect=document.body.dataset.effect,accent=brushes[effect]?.accent;return {effect,color:accent||color,size:document.getElementById('brush-size').valueAsNumber*(accent ? .56 : 1),mineral:true,shape3d:Boolean(shapeToggle?.checked),smartDraw:Boolean(smartDrawToggle?.checked)};},engine);
   // Rendering on demand avoids redrawing identical frames every RAF while MediaPipe shares the GPU.
   const redraw = () => { needsRender = true; };
   controls.addEventListener('change', redraw);
@@ -109,6 +261,39 @@ export function createScene(host, status, metrics, strokeStatus = null, getStren
     if (cursorSource === 'held') cursorExpiry = setTimeout(() => {
       cursor.visible = false; needsRender = true;
     }, Math.max(0, 150-cursorAgeMs));
+    if (grabbed && !grabbed.parent) grabbed = null;
+    if (hovered && !hovered.parent) hovered = null;
+    if (state === 'Grabbing') {
+      clearHover();
+      if (point) {
+        if (!grabbed) {
+          const target = findGrabbable(point);
+          if (target) {
+            grabbed = target;
+            grabOffset.set(grabbed.position.x - point.x, grabbed.position.y - point.y, grabbed.position.z - point.z);
+            setShapeEmissive(grabbed, .55);
+          }
+        }
+        if (grabbed) {
+          grabbed.position.set(point.x + grabOffset.x, point.y + grabOffset.y, point.z + grabOffset.z);
+          needsRender = true;
+        }
+      }
+    } else {
+      releaseGrab();
+      if (point && state === 'Idle') {
+        const nextHover = findGrabbable(point);
+        if (nextHover !== hovered) {
+          clearHover();
+          hovered = nextHover;
+          if (hovered) setShapeEmissive(hovered, .25);
+          needsRender = true;
+        }
+      } else if (hovered) {
+        clearHover();
+        needsRender = true;
+      }
+    }
     // Repeated hidden-cursor results (no valid right hand) cannot change the cursor or any stroke:
     // an active stroke only ends on a result whose state differs from the previous Pinching one.
     if (point === null && !cursor.visible && state === lastState) return;
@@ -118,11 +303,11 @@ export function createScene(host, status, metrics, strokeStatus = null, getStren
     lastState = state;
     cursor.visible = point !== null;
     if (point) cursor.position.set(point.x, point.y, point.z);
-    cursor.material.color.set(cursorSource === 'held' ? 0xffb347 : state === 'Pinching' ? 0x59e094 : state === 'Rearming' ? 0xffb347 : 0x35bfff);
+    cursor.material.color.set(cursorSource === 'held' ? 0xffb347 : state === 'Grabbing' ? 0xd8fa43 : state === 'Pinching' ? 0x59e094 : state === 'Rearming' ? 0xffb347 : 0x35bfff);
     needsRender = true;
   };
   window.addEventListener('kineglow:interaction', receive);
-  const clear = () => { clearTimeout(cursorExpiry); playback.reset();cursor.visible = false; lastState = null; needsRender = true; };
+  const clear = () => { cancelPendingSketch(true); recentUnmatched = []; releaseGrab(); clearHover(); clearTimeout(cursorExpiry); playback.reset();cursor.visible = false; lastState = null; needsRender = true; };
   window.addEventListener('kineglow:clear', clear);
   const resetEffect=()=>{flights.clear();clear();};
   window.addEventListener('kineglow:effect',resetEffect);
@@ -175,9 +360,14 @@ export function createScene(host, status, metrics, strokeStatus = null, getStren
     }
   });
   status.textContent = '正交视图 · 拖动只改变观察角度，保留笔迹的三维坐标';
-  return () => {
+  const cleanup = () => {
     if (disposed) return;
     disposed = true;
+    cancelPendingSketch(true);
+    recentUnmatched = [];
+    clearTimeout(shapeToastTimer);
+    releaseGrab();
+    clearHover();
     clearTimeout(cursorExpiry);
     renderer.setAnimationLoop(null);
     resize.disconnect();
@@ -204,4 +394,8 @@ export function createScene(host, status, metrics, strokeStatus = null, getStren
     renderer.forceContextLoss();
     renderer.domElement.remove();
   };
+  cleanup.hasShapes = () => engine.shapes.length > 0;
+  cleanup.grabbedType = () => grabbed?.userData?.shapeType ?? null;
+  cleanup.grabbedLabel = () => grabbed?.userData?.displayName ?? null;
+  return cleanup;
 }

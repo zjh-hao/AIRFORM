@@ -78,15 +78,15 @@ const depthProjector = new DepthProjector();
 const planeProjector = new DrawingPlane();
 let webcamDrawingFrame;
 let projectionFrames = 0, projectionTotal = 0, projectionMax = 0;
-const projectPoint = (tip, frame, hand, timestamp) => {
+const projectPoint = (tip, frame, hand, timestamp, options) => {
   if (input.value !== 'astra') {
     if(webcamDrawingFrame?.width!==canvas.width||webcamDrawingFrame?.height!==canvas.height) {
       webcamDrawingFrame=imageDrawingFrame(canvas.width,canvas.height);
     }
-    return planeProjector.project(tip,webcamDrawingFrame,hand,timestamp);
+    return planeProjector.project(tip,webcamDrawingFrame,hand,timestamp,undefined,options);
   }
   const started = performance.now();
-  const point = depthProjector.project(tip, frame, hand, timestamp);
+  const point = depthProjector.project(tip, frame, hand, timestamp, options);
   const elapsed = performance.now() - started;
   projectionFrames++; projectionTotal += elapsed; projectionMax = Math.max(projectionMax, elapsed);
   if (diagnosticDue) $('#fusion-metrics').textContent = `轻量融合与滤波：本帧 ${elapsed.toFixed(2)} / 平均 ${(projectionTotal / projectionFrames).toFixed(2)} / 最大 ${projectionMax.toFixed(2)} ms · 复用现有手部模型`;
@@ -101,7 +101,8 @@ const runningMode = new URLSearchParams(location.search).get('inference') === 'i
 const astraDelegate = new URLSearchParams(location.search).get('delegate') === 'CPU' ? 'CPU' : 'GPU';
 let astraBackend = astraDelegate === 'GPU' ? 'Python GPU · DirectML' : 'Python CPU';
 const astraMode = runningMode === 'IMAGE' ? 'IMAGE 逐帧图片识别' : 'VIDEO 视频跟踪';
-const disconnectInteraction = connectInteraction(window, () => ({ width: canvas.width, height: canvas.height }), projectPoint, { gestureMode });
+const disconnectInteraction = connectInteraction(window, () => ({ width: canvas.width, height: canvas.height }), projectPoint,
+  { gestureMode, canGrab: () => Boolean(cleanupScene?.hasShapes?.()) });
 function depthSampleText(sample) {
   const mm = (sample.z * 1000).toFixed(0);
   switch (sample.source) {
@@ -120,6 +121,13 @@ function drawingPrompt({ source, state, point, tracking, canResume }) {
   if (state === 'Rearming') return '等待解锁：请先张开右手，再捏合拇指与食指。';
   if (tracking === 'boundary-paused') return '手部边缘短时失追：暂停落笔，回到刚才位置可续画；持续失追将收笔。';
   if (tracking === 'pinch-paused') return '短暂漏检：暂停落笔，保持捏合即可继续。';
+  if (tracking === 'grab-paused') return '短暂漏检：保持握拳继续抓取移动。';
+  if (state === 'Grabbing') {
+    const label = cleanupScene?.grabbedLabel?.();
+    return label
+      ? `握拳抓取中：移动右手搬运 3D ${label}，张开手掌松开。`
+      : '握拳中：请移近三维物体后再握拳抓取。';
+  }
   if (tracking === 'foreshortened') return '手指朝向镜头：使用三维手势判断；捏合绘画，松开收笔。';
   if (state === 'Pinching') {
     if (input.value === 'astra' && depthProjector.sample.source === 'depth-plane') return '正在连续绘画：深度暂缺，沿上一深度平面继续；保持捏合即可。';

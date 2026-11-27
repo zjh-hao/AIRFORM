@@ -16,18 +16,23 @@ export class DrawingGain {
   constructor() { this.reset(); }
   reset() { this.boneLengths=null; this.lastRoot=null; this.mode='waiting'; }
 
-  project(tip,frame,hand,pose=unitHandShape(hand,frame)) {
+  project(tip,frame,hand,pose=unitHandShape(hand,frame),options=null) {
     if(!visible(tip))return null;
+    const foreshortened=Boolean(options?.foreshortened);
     let root=null;
     // Bone 1 is wrist -> middle MCP. It supplies a fixed nominal scale; the
     // other palm spans allow the same scale to survive a partially clipped hand.
     if(pose?.bones[1]>.015) {
       root=DRAWING_GAIN.nominalPalmMeters/pose.bones[1];
-      const lengths=pose.bones.map(length=>length*root);
-      this.boneLengths=lengths.map((length,i)=>length>.001
-        ? (this.boneLengths?.[i] ? .95*this.boneLengths[i]+.05*length : length)
-        : this.boneLengths?.[i]??0);
-      this.mode='palm-normalized';
+      if(!foreshortened) {
+        const lengths=pose.bones.map(length=>length*root);
+        this.boneLengths=lengths.map((length,i)=>length>.001
+          ? (this.boneLengths?.[i] ? .95*this.boneLengths[i]+.05*length : length)
+          : this.boneLengths?.[i]??0);
+        this.mode='palm-normalized';
+      } else {
+        this.mode='palm-foreshortened';
+      }
     } else if(pose&&this.boneLengths) {
       const candidates=pose.bones.flatMap((length,i)=>length>.015&&this.boneLengths[i]>.001
         ? [this.boneLengths[i]/length]:[]);
@@ -40,9 +45,20 @@ export class DrawingGain {
       const span=Math.hypot((hand[0].x-hand[9].x)*frame.width/fx,(hand[0].y-hand[9].y)*frame.height/fy);
       if(span>1e-6) {root=DRAWING_GAIN.nominalPalmMeters/span;this.mode='palm-2d';}
     }
-    if(root!==null&&Number.isFinite(root)&&root>.02&&root<8)this.lastRoot=root;
-    else {root=this.lastRoot??1;this.mode=this.lastRoot===null?'image-fallback':'held-visual-scale';}
-    const relativeZ=pose?.points[8]?.z??1;
+    if(root!==null&&Number.isFinite(root)&&root>.02&&root<8) {
+      if(foreshortened&&this.lastRoot!==null) {
+        const minRoot=this.lastRoot*.85,maxRoot=this.lastRoot*1.15;
+        root=Math.max(minRoot,Math.min(maxRoot,root));
+        this.lastRoot=this.lastRoot*.9+root*.1;
+      } else {
+        this.lastRoot=root;
+      }
+    } else {
+      root=this.lastRoot??1;
+      this.mode=this.lastRoot===null?'image-fallback':'held-visual-scale';
+    }
+    const rawRelativeZ=pose?.points[8]?.z??1;
+    const relativeZ=foreshortened?Math.max(.85,Math.min(1.15,rawRelativeZ)):rawRelativeZ;
     const point=cameraPoint({u:tip.x*frame.width,v:tip.y*frame.height,z:root*relativeZ},frame);
     if(!point)return null;
     return {x:point.x*DRAWING_GAIN.multiplier,y:point.y*DRAWING_GAIN.multiplier,z:0};
@@ -67,14 +83,15 @@ export class DrawingPlane {
       this.gain.reset();this.filter.reset();this.cursorFilter.reset();this.cursorPoint=null;
     }
   }
-  project(tip,frame,hand,timestamp,pose) {
+  project(tip,frame,hand,timestamp,pose,options=null) {
     this.suspendedAt=null;
-    const input=this.gain.project(tip,frame,hand,pose);
+    const input=this.gain.project(tip,frame,hand,pose,options);
     const palm=DRAWING_GAIN.nominalPalmMeters*DRAWING_GAIN.multiplier;
-    const cursor=this.cursorFilter.update(input ? {x:input.x/palm,y:input.y/palm,z:0} : null,timestamp);
+    const cursor=this.cursorFilter.update(input ? {x:input.x/palm,y:input.y/palm,z:0} : null,timestamp,options);
     this.rawPoint=input ? {...input} : null;
     this.cursorPoint=cursor ? {x:-cursor.x*palm*DEPTH_SCENE.unitsPerMeter,y:-cursor.y*palm*DEPTH_SCENE.unitsPerMeter,z:0} : null;
-    const point=this.filter.update(input,timestamp,1);
+    const confidence=options?.foreshortened ? .25 : 1;
+    const point=this.filter.update(input,timestamp,confidence);
     if(!point)return null;
     this.lastTimestamp=timestamp;
     const scale=DEPTH_SCENE.unitsPerMeter;

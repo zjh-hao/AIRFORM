@@ -41,7 +41,29 @@ class DepthRegistration:
         pixels = np.stack((x, y), axis=-1).astype(np.float64).reshape(-1, 1, 2)
         xy = cv2.undistortPoints(pixels, self.depth_k, self.depth_dist).reshape(-1, 2)
         # R is fixed: rotate unit rays once, then scale only valid pixels per frame.
-        self.color_rays = (np.column_stack((xy, np.ones(len(xy)))) @ self.rotation.T).T.copy()
+        self.color_rays = np.ascontiguousarray(
+            (np.column_stack((xy, np.ones(len(xy)))) @ self.rotation.T).T,
+            dtype=np.float32,
+        )
+        self._tx, self._ty, self._tz = (np.float32(v) for v in self.translation)
+        self._fx = np.float32(self.color_k[0, 0])
+        self._fy = np.float32(self.color_k[1, 1])
+        self._cx = np.float32(self.color_k[0, 2])
+        self._cy = np.float32(self.color_k[1, 2])
+        self._k1, self._k2, self._p1, self._p2, self._k3 = (np.float32(v) for v in self.color_dist)
+        self._has_dist = bool(np.any(self.color_dist != 0))
+        self._has_tangential = bool(self._p1 != 0 or self._p2 != 0)
+        n_pix = width * height
+        self._buf_d = np.empty(n_pix, np.float32)
+        self._buf_x = np.empty(n_pix, np.float32)
+        self._buf_y = np.empty(n_pix, np.float32)
+        self._buf_z = np.empty(n_pix, np.float32)
+        self._buf_t1 = np.empty(n_pix, np.float32)
+        self._buf_t2 = np.empty(n_pix, np.float32)
+        self._buf_r2 = np.empty(n_pix, np.float32)
+        self._buf_rad = np.empty(n_pix, np.float32)
+        self._buf_xy2 = np.empty(n_pix, np.float32)
+        self._aligned = np.empty(n_pix, dtype='<u2')
         self.metadata = {'width': width, 'height': height,
                          'intrinsics': list(calibration['color_intrinsics']),
                          'distortion': list(calibration['color_distortion']),
@@ -53,23 +75,58 @@ class DepthRegistration:
             raise ValueError('Expected native uint16 depth at calibrated resolution')
         z = depth.ravel()
         idx = np.flatnonzero((z >= 200) & (z <= 4000))
-        d = z[idx]
-        x, y, cz = (ray[idx] * d + t for ray, t in zip(self.color_rays, self.translation))
-        front = cz > 0
-        if not front.all():
-            x, y, cz = x[front], y[front], cz[front]
-        x /= cz
-        y /= cz
-        # OpenCV's five-coefficient lens model without constructing its unused Jacobian.
-        k1, k2, p1, p2, k3 = self.color_dist
-        xx, yy, xy2 = x*x, y*y, 2*x*y
-        r2 = xx + yy
-        radial = 1 + r2 * (k1 + r2 * (k2 + r2 * k3))
-        u = np.rint(self.color_k[0, 0] * (x*radial + p1*xy2 + p2*(r2 + 2*xx)) + self.color_k[0, 2])
-        v = np.rint(self.color_k[1, 1] * (y*radial + p1*(r2 + 2*yy) + p2*xy2) + self.color_k[1, 2])
+        n = idx.size
+        if not n:
+            return np.zeros((self.height, self.width), dtype='<u2')
+        dv = self._buf_d[:n]
+        x = self._buf_x[:n]
+        y = self._buf_y[:n]
+        cz = self._buf_z[:n]
+        dv[:] = z[idx]
+        rx, ry, rz = self.color_rays
+        np.multiply(rx[idx], dv, out=x); x += self._tx
+        np.multiply(ry[idx], dv, out=y); y += self._ty
+        np.multiply(rz[idx], dv, out=cz); cz += self._tz
+        if cz.min() <= 0:
+            front = cz > 0
+            n = int(np.count_nonzero(front))
+            if not n:
+                return np.zeros((self.height, self.width), dtype='<u2')
+            x = x[front]; y = y[front]; cz = cz[front]
+        np.divide(x, cz, out=x)
+        np.divide(y, cz, out=y)
+        # OpenCV's five-coefficient lens model using pre-allocated in-place buffers.
+        if self._has_dist:
+            xx = self._buf_t1[:n]
+            yy = self._buf_t2[:n]
+            r2 = self._buf_r2[:n]
+            rad = self._buf_rad[:n]
+            np.multiply(x, x, out=xx)
+            np.multiply(y, y, out=yy)
+            np.add(xx, yy, out=r2)
+            np.multiply(r2, self._k3, out=rad); rad += self._k2; rad *= r2; rad += self._k1; rad *= r2; rad += np.float32(1.0)
+            u_f = x * rad
+            v_f = y * rad
+            if self._has_tangential:
+                xy2 = self._buf_xy2[:n]
+                np.multiply(x, y, out=xy2); xy2 *= np.float32(2.0)
+                if self._p1 != 0:
+                    u_f += self._p1 * xy2
+                    v_f += self._p1 * (r2 + np.float32(2.0) * yy)
+                if self._p2 != 0:
+                    u_f += self._p2 * (r2 + np.float32(2.0) * xx)
+                    v_f += self._p2 * xy2
+            u_f *= self._fx; u_f += self._cx; np.rint(u_f, out=u_f)
+            v_f *= self._fy; v_f += self._cy; np.rint(v_f, out=v_f)
+            u = u_f.astype(np.int32)
+            v = v_f.astype(np.int32)
+        else:
+            u = np.rint(x * self._fx + self._cx).astype(np.int32)
+            v = np.rint(y * self._fy + self._cy).astype(np.int32)
         good = (u >= 0) & (u < self.width) & (v >= 0) & (v < self.height)
-        indices = v[good].astype(np.intp)*self.width + u[good].astype(np.intp)
-        aligned = np.full(z.size, np.inf)
-        np.minimum.at(aligned, indices, cz[good])
-        aligned[~np.isfinite(aligned)] = 0
-        return np.rint(aligned).astype('<u2').reshape(self.height, self.width)
+        indices = v[good] * self.width + u[good]
+        z_mm = np.rint(cz[good]).clip(0, 65534).astype('<u2')
+        self._aligned.fill(65535)
+        np.minimum.at(self._aligned, indices, z_mm)
+        self._aligned[self._aligned == 65535] = 0
+        return self._aligned.reshape(self.height, self.width).copy()

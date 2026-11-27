@@ -25,6 +25,7 @@ from .camera import AstraCamera
 from .capture_process import IsolatedAstra
 from .hand_gpu import GpuHandTracker
 from .hand_tracking import HandTracker, TrackedAstra
+from .sketch_model import get_sketch_recognizer
 
 ROOT = Path(__file__).resolve().parents[2]
 DIST = ROOT / 'web/dist'
@@ -152,17 +153,30 @@ class CaptureManager:
                 self.session = None
 
 
-def handler_for(manager, directory, port):
+def handler_for(manager, directory, port, sketch_recognizer=None):
     allowed_hosts = {f'127.0.0.1:{port}', f'localhost:{port}'}
+    recognizer = sketch_recognizer or get_sketch_recognizer()
 
     class Handler(SimpleHTTPRequestHandler):
         server_version = SERVER_NAME
+        protocol_version = 'HTTP/1.1'
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(directory), **kwargs)
 
+        def setup(self):
+            super().setup()
+            self.request.settimeout(15.0)
+
+        def handle(self):
+            try:
+                super().handle()
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError, OSError):
+                self.close_connection = True
+
         def _check_host(self):
             if self.headers.get('Host') not in allowed_hosts:
+                self.close_connection = True
                 self.send_error(403, 'Use localhost or 127.0.0.1')
                 return False
             return True
@@ -170,13 +184,15 @@ def handler_for(manager, directory, port):
         def _send(self, data, content_type='application/json', status=200):
             try:
                 self.send_response(status)
-                self.send_header('Content-Type', content_type)
-                self.send_header('Content-Length', str(len(data)))
+                if status != 204:
+                    self.send_header('Content-Type', content_type)
+                    self.send_header('Content-Length', str(len(data)))
                 self.send_header('Cache-Control', 'no-store')
                 self.send_header('X-Content-Type-Options', 'nosniff')
                 self.end_headers()
-                self.wfile.write(data)
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                if status != 204 and data:
+                    self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError, OSError):
                 self.close_connection = True
 
         def _json(self, data, status=200):
@@ -194,6 +210,8 @@ def handler_for(manager, directory, port):
                     self._json({'error': str(error)}, 409)
                     return
                 self._send(packet or b'', 'application/octet-stream', 200 if packet else 204)
+            elif route.path == '/api/sketch/status':
+                self._json(recognizer.status())
             elif route.path.startswith('/api/'):
                 self.send_error(404)
             else:
@@ -206,11 +224,14 @@ def handler_for(manager, directory, port):
             if (self.headers.get('X-KineGlow-Client') != '1'
                     or self.headers.get_content_type() != 'application/json'
                     or (origin is not None and origin not in {f'http://{h}' for h in allowed_hosts})):
+                self.close_connection = True
                 self._json({'error': 'Same-origin AIRFORM client required'}, 403)
                 return
             try:
+                max_bytes = 65536 if self.path == '/api/sketch/recognize' else 4096
                 size = int(self.headers.get('Content-Length', '0'))
-                if not 0 <= size <= 4096:
+                if not 0 <= size <= max_bytes:
+                    self.close_connection = True
                     raise ValueError('Invalid body size')
                 body = json.loads(self.rfile.read(size) or b'{}')
                 if not isinstance(body, dict):
@@ -220,6 +241,14 @@ def handler_for(manager, directory, port):
                 elif self.path == '/api/astra/stop':
                     manager.stop(body.get('session'))
                     self._json({'stopped': True})
+                elif self.path == '/api/sketch/recognize':
+                    result = recognizer.recognize(
+                        body.get('strokes'),
+                        closed_hint=bool(body.get('closedHint', False)),
+                        fallback_strokes=body.get('fallbackStrokes'),
+                        fallback_closed_hint=bool(body.get('fallbackClosedHint', False)),
+                    )
+                    self._json(result)
                 else:
                     self.send_error(404)
             except (RuntimeError, ValueError, PermissionError) as error:
@@ -264,6 +293,7 @@ def probe(factory, frames):
 
 class WorkshopServer(ThreadingHTTPServer):
     allow_reuse_address = False
+    daemon_threads = True
 
     def server_bind(self):
         if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
@@ -322,6 +352,7 @@ def main():
         webbrowser.open(url)
         return
     print(f'AIRFORM Astra Python: {url} (camera opens only after Start)', flush=True)
+    threading.Thread(target=get_sketch_recognizer().status, name='sketch-warmup', daemon=True).start()
     if args.open_browser:
         webbrowser.open(url)
     try:

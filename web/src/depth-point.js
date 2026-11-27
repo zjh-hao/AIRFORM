@@ -31,18 +31,19 @@ export class DepthProjector {
       this.fusion.reset(); this.plane.reset(); this.depthFilter.reset(); this.cursorDepth.reset(); this.cursorPoint = null; this.lastOutput = null;
     }
   }
-  project(tip, frame, hand, timestamp) {
+  project(tip, frame, hand, timestamp, options = null) {
     if(!frame) {this.reset();return null;}
     const allowGap = this.suspendedAt !== null && timestamp-this.suspendedAt <= STROKE_CONTINUITY.pauseMs;
     this.suspendedAt = null;
     const point = this.fusion.update(tip, frame, hand, timestamp, { allowGap });
-    const xy = this.plane.project(tip, frame, hand, timestamp, this.fusion.pose);
+    const xy = this.plane.project(tip, frame, hand, timestamp, this.fusion.pose, options);
     // Independent display depth branch, before the ink Kalman. One nominal
     // 9 cm palm sets its filter units, not a measured palm or a depth scale.
-    const cursorZ = this.cursorDepth.update(point ? {x:0,y:0,z:point.z/.09} : null,timestamp);
+    const cursorZ = this.cursorDepth.update(point ? {x:0,y:0,z:point.z/.09} : null,timestamp,options);
     this.cursorPoint = this.plane.cursorPoint && cursorZ ? { ...this.plane.cursorPoint,
       z:(DEPTH_SCENE.originDepthMeters-cursorZ.z*.09)*DEPTH_SCENE.unitsPerMeter } : null;
-    const depth = this.depthFilter.update(point ? {x:0,y:0,z:point.z} : null,timestamp,this.sample.confidence??1);
+    const confidence = (this.sample.confidence ?? 1) * (options?.foreshortened ? .5 : 1);
+    const depth = this.depthFilter.update(point ? {x:0,y:0,z:point.z} : null,timestamp,confidence);
     this.sample.motion = { ...this.filter.status,
       relocated: !!(this.filter.status?.relocated || this.depthFilter.status?.relocated) };
     if (!xy || !depth) return null;

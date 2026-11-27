@@ -18,6 +18,33 @@ LANDMARK_FILE = 'hand_landmarks_detector.onnx'
 HAND_JOINTS = [0, 1, 2, 3, 5, 6, 9, 10, 13, 14, 17, 18]
 PALM_SIZE = 192
 HAND_SIZE = 224
+PALM_SCAN_INTERVAL = 10
+ROI_DEADBAND_PX = 5.0
+ROI_SIDE_DEADBAND = .06
+ROI_ANGLE_DEADBAND = .06
+VELOCITY_DEADBAND_PX = 6.0
+MAX_PREDICT_SHIFT_RATIO = .45
+MAX_SPEED_EXPAND = 1.35
+MAX_PREDICT_DT_S = .12
+
+
+def _angle_diff(a, b):
+    return (a - b + math.pi) % (2 * math.pi) - math.pi
+
+
+def _predict_rect(rect, velocity, dt, width, height):
+    if dt <= 0 or dt > MAX_PREDICT_DT_S:
+        return Square(rect.center.copy(), rect.side, rect.angle)
+    shift = velocity * dt
+    norm = float(np.hypot(shift[0], shift[1]))
+    if norm <= 1e-6:
+        return Square(rect.center.copy(), rect.side, rect.angle)
+    max_shift = rect.side * MAX_PREDICT_SHIFT_RATIO
+    if norm > max_shift:
+        shift = shift * (max_shift / norm)
+    pred_center = np.clip(rect.center + shift, [0.0, 0.0], [float(width), float(height)]).astype(np.float32)
+    expand = min(MAX_SPEED_EXPAND, 1.0 + .8 * (norm / max(rect.side, 1.0)))
+    return Square(pred_center, float(rect.side * expand), rect.angle)
 
 
 def palm_anchors():
@@ -138,8 +165,73 @@ class GpuHandTracker:
         self.palm = directml_session(PALM_FILE, profile_dir / 'palms' if profile_dir else None)
         self.hand = directml_session(LANDMARK_FILE, profile_dir / 'landmarks' if profile_dir else None)
         self.previous = []
+        self._velocities = []
+        self._prev_ts = None
+        self._frames_since_palm = 0
         self.epoch = None
         self.timestamp_ms = -1
+
+    def _detect_palms(self, rgb, center, scale):
+        tensor = Square(center, scale, 0).crop(rgb, PALM_SIZE)
+        raw, logits = self.palm.run(['Identity', 'Identity_1'], {'input_1': tensor})
+        return palm_rectangles(raw, logits, scale, center - scale / 2, self.threshold)
+
+    def _run_landmarks(self, rgb, rect, width, height):
+        tensor = rect.crop(rgb, HAND_SIZE)
+        image_xyz, presence, side, world_xyz = self.hand.run(
+            ['Identity', 'Identity_1', 'Identity_2', 'Identity_3'], {'input_1': tensor})
+        if float(presence.item()) < self.threshold:
+            return None
+        axes = rotation_matrix(rect.angle)
+        local = image_xyz.reshape(21, 3) / HAND_SIZE
+        pixel_xy = (local[:, :2] - .5) @ axes.T * rect.side + rect.center
+        raw_rect = tracking_square(pixel_xy)
+        points = np.column_stack((pixel_xy / [width, height], local[:, 2] * rect.side / (.4 * width)))
+        metric = world_xyz.reshape(21, 3)
+        world_points = np.column_stack((metric[:, :2] @ axes.T, metric[:, 2]))
+        score = float(side.item())
+        index = int(score < .5)
+        name = 'Left' if index else 'Right'
+        return (
+            raw_rect,
+            self.coordinates(points),
+            self.coordinates(world_points),
+            [{'categoryName': name, 'displayName': name, 'index': index,
+              'score': 1 - score if index else score}],
+        )
+
+    def _stabilize_tracks(self, raw_rects, dt):
+        next_rects, next_vels = [], []
+        used = set()
+        for raw in raw_rects:
+            best_idx, best_dist = None, float('inf')
+            raw_bounds = raw.bounds()
+            for idx, prev in enumerate(self.previous):
+                if idx in used:
+                    continue
+                dist = float(np.hypot(raw.center[0] - prev.center[0], raw.center[1] - prev.center[1]))
+                if (overlap(raw_bounds, prev.bounds()) > .1 or dist < max(prev.side, raw.side)) and dist < best_dist:
+                    best_dist = dist
+                    best_idx = idx
+            if best_idx is not None:
+                used.add(best_idx)
+                prev = self.previous[best_idx]
+                prev_vel = self._velocities[best_idx] if best_idx < len(self._velocities) else np.zeros(2, dtype=np.float32)
+                delta = raw.center - prev.center
+                move = float(np.hypot(delta[0], delta[1]))
+                if move < VELOCITY_DEADBAND_PX or dt <= 0 or dt > MAX_PREDICT_DT_S:
+                    vel = np.zeros(2, dtype=np.float32)
+                else:
+                    vel = (.65 * (delta / dt) + .35 * prev_vel).astype(np.float32)
+                center = prev.center.copy() if move < ROI_DEADBAND_PX else raw.center.copy()
+                side = prev.side if abs(raw.side - prev.side) / max(prev.side, 1.0) < ROI_SIDE_DEADBAND else raw.side
+                angle = prev.angle if abs(_angle_diff(raw.angle, prev.angle)) < ROI_ANGLE_DEADBAND else raw.angle
+                next_rects.append(Square(center, float(side), float(angle)))
+                next_vels.append(vel)
+            else:
+                next_rects.append(Square(raw.center.copy(), float(raw.side), float(raw.angle)))
+                next_vels.append(np.zeros(2, dtype=np.float32))
+        return next_rects, next_vels
 
     def detect(self, bgr, captured_at):
         if self.epoch is None:
@@ -151,36 +243,75 @@ class GpuHandTracker:
         height, width = rgb.shape[:2]
         center = np.array([width, height], dtype=np.float32) / 2
         scale = max(width, height)
-        rectangles = self.previous.copy() if self.mode == 'VIDEO' else []
-        if len(rectangles) < 2:
-            tensor = Square(center, scale, 0).crop(rgb, PALM_SIZE)
-            raw, logits = self.palm.run(['Identity', 'Identity_1'], {'input_1': tensor})
-            fresh = palm_rectangles(raw, logits, scale, center - scale / 2, self.threshold)
-            for rect in fresh:
-                if all(overlap(rect.bounds(), old.bounds()) <= .35 for old in rectangles):
-                    rectangles.append(rect)
-        landmarks, world, handedness, next_rects = [], [], [], []
-        for rect in rectangles[:2]:
-            tensor = rect.crop(rgb, HAND_SIZE)
-            image_xyz, presence, side, world_xyz = self.hand.run(
-                ['Identity', 'Identity_1', 'Identity_2', 'Identity_3'], {'input_1': tensor})
-            if float(presence.item()) < self.threshold:
-                continue
-            axes = rotation_matrix(rect.angle)
-            local = image_xyz.reshape(21, 3) / HAND_SIZE
-            pixel_xy = (local[:, :2] - .5) @ axes.T * rect.side + rect.center
-            next_rects.append(tracking_square(pixel_xy))
-            points = np.column_stack((pixel_xy / [width, height], local[:, 2] * rect.side / (.4 * width)))
-            metric = world_xyz.reshape(21, 3)
-            world_points = np.column_stack((metric[:, :2] @ axes.T, metric[:, 2]))
-            landmarks.append(self.coordinates(points))
-            world.append(self.coordinates(world_points))
-            score = float(side.item())
-            index = int(score < .5)
-            name = 'Left' if index else 'Right'
-            handedness.append([{'categoryName': name, 'displayName': name, 'index': index,
-                                'score': 1 - score if index else score}])
-        self.previous = next_rects
+        dt = (captured_at - self._prev_ts) if self._prev_ts is not None else 0.0
+
+        landmarks, world, handedness, raw_rects = [], [], [], []
+        if self.mode == 'VIDEO':
+            rectangles = [
+                _predict_rect(
+                    rect,
+                    self._velocities[i] if i < len(self._velocities) else np.zeros(2, dtype=np.float32),
+                    dt, width, height,
+                )
+                for i, rect in enumerate(self.previous)
+            ]
+            need_palm = not rectangles or (len(rectangles) < 2 and self._frames_since_palm >= PALM_SCAN_INTERVAL)
+            if need_palm:
+                fresh = self._detect_palms(rgb, center, scale)
+                self._frames_since_palm = 0
+                for rect in fresh:
+                    if len(rectangles) >= 2:
+                        break
+                    if all(overlap(rect.bounds(), old.bounds()) <= .35 for old in rectangles):
+                        rectangles.append(rect)
+            else:
+                self._frames_since_palm += 1
+
+            any_lost = False
+            for rect in rectangles[:2]:
+                det = self._run_landmarks(rgb, rect, width, height)
+                if det is None:
+                    any_lost = True
+                    continue
+                raw_rect, pts, wpts, hand_meta = det
+                raw_rects.append(raw_rect)
+                landmarks.append(pts)
+                world.append(wpts)
+                handedness.append(hand_meta)
+
+            if not need_palm and (any_lost or not landmarks):
+                fresh = self._detect_palms(rgb, center, scale)
+                self._frames_since_palm = 0
+                for rect in fresh:
+                    if len(raw_rects) >= 2:
+                        break
+                    if all(overlap(rect.bounds(), existing.bounds()) <= .35 for existing in raw_rects):
+                        det = self._run_landmarks(rgb, rect, width, height)
+                        if det is None:
+                            continue
+                        raw_rect, pts, wpts, hand_meta = det
+                        raw_rects.append(raw_rect)
+                        landmarks.append(pts)
+                        world.append(wpts)
+                        handedness.append(hand_meta)
+
+            self.previous, self._velocities = self._stabilize_tracks(raw_rects, dt)
+            self._prev_ts = captured_at
+        else:
+            fresh = self._detect_palms(rgb, center, scale)
+            for rect in fresh[:2]:
+                det = self._run_landmarks(rgb, rect, width, height)
+                if det is None:
+                    continue
+                _, pts, wpts, hand_meta = det
+                landmarks.append(pts)
+                world.append(wpts)
+                handedness.append(hand_meta)
+            self.previous = []
+            self._velocities = []
+            self._prev_ts = None
+            self._frames_since_palm = 0
+
         return {'landmarks': landmarks, 'worldLandmarks': world, 'handedness': handedness,
                 'inferenceMs': (time.perf_counter() - started) * 1000,
                 'preprocessMs': (started - begin) * 1000, 'timestampMs': self.timestamp_ms}

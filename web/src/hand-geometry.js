@@ -93,3 +93,42 @@ export class HandIdentity {
     return { index: 0, held: true };
   }
 }
+
+const FINGER_JOINTS = [[8, 6, 5], [12, 10, 9], [16, 14, 13], [20, 18, 17]];
+
+/**
+ * Detect a closed fist gesture for 3D shape grabbing while resisting accidental
+ * pinch overlap and providing hysteresis for release.
+ */
+export function detectFist(hand, world, width, height) {
+  const useWorld = Array.isArray(world) && world.length === 21
+    && world.every(p => p && axes.every(k => Number.isFinite(p[k])));
+  const pts = useWorld ? world : hand;
+  if (!pts?.[0] || (!useWorld && !(width > 0 && height > 0))) return { fist: false, openForRelease: false };
+  const dist = (a, b) => {
+    if (!pts[a] || !pts[b]) return null;
+    if (!useWorld && (!inImage(pts[a]) || !inImage(pts[b]))) return null;
+    return useWorld
+      ? Math.hypot(pts[a].x - pts[b].x, pts[a].y - pts[b].y, pts[a].z - pts[b].z)
+      : Math.hypot((pts[a].x - pts[b].x) * width, (pts[a].y - pts[b].y) * height);
+  };
+  let validFingers = 0, curled = 0, extended = 0, threeBackCurled = 0;
+  let indexRatio = Infinity;
+  for (let f = 0; f < FINGER_JOINTS.length; f++) {
+    const [tip, pip, mcp] = FINGER_JOINTS[f];
+    const dTip = dist(tip, 0), dPip = dist(pip, 0), dMcp = dist(mcp, 0);
+    if (!Number.isFinite(dTip) || !Number.isFinite(dPip) || !(dMcp > 1e-6)) continue;
+    validFingers++;
+    const ratio = dTip / dMcp;
+    if (f === 0) indexRatio = ratio;
+    const isCurled = ratio <= 1.28 || dTip <= dPip * 1.08;
+    const isExtended = ratio >= 1.44 && dTip > dPip * 1.12;
+    if (isCurled) {
+      curled++;
+      if (f > 0) threeBackCurled++;
+    }
+    if (isExtended) extended++;
+  }
+  const fist = validFingers >= 4 && (curled === 4 || (threeBackCurled === 3 && indexRatio <= 1.38));
+  return { fist, openForRelease: validFingers >= 3 && extended >= 2 };
+}

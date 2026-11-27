@@ -1,8 +1,9 @@
 // P0-A geometry and thresholds; pixel aspect ratio matters for distances.
 import { GestureScale, BOUNDARY, inImage } from './gesture-scale.js';
 import { STROKE_CONTINUITY } from './stroke-continuity.js';
-import { HandGesture, HandIdentity, HAND_GEOMETRY } from './hand-geometry.js';
+import { HandGesture, HandIdentity, HAND_GEOMETRY, detectFist } from './hand-geometry.js';
 export const PINCH = Object.freeze({ enter: 0.30, release: 0.45, confirmMs: 80, releaseConfirmMs: 40, handConfirmMs: 80, maxGapMs: 250 });
+export const GRAB = Object.freeze({ confirmMs: 60, releaseConfirmMs: 80 });
 export const PLANE = Object.freeze({ width: 6, height: 4.5, z: 0 });
 
 export function pinchRatio(points, width, height) {
@@ -22,9 +23,10 @@ export function mapPoint(tip) {
 }
 
 export class HandInteraction {
-  constructor(projectPoint = mapPoint, { gestureMode = 'world' } = {}) {
+  constructor(projectPoint = mapPoint, { gestureMode = 'world', canGrab = null } = {}) {
     this.projectPoint = projectPoint;
     this.gestureMode = gestureMode;
+    this.canGrab = canGrab;
     this.gestureScale = gestureMode === 'legacy' ? new GestureScale() : new HandGesture();
     this.identity = new HandIdentity();
     this.reset();
@@ -39,6 +41,7 @@ export class HandInteraction {
       && this.lastTimestamp-this.lastVisible.timestamp <= STROKE_CONTINUITY.pauseMs;
     this.state = 'TrackingLost';
     this.pendingSince = null;
+    this.grabPendingSince = null;
     this.rightSince = null;
     this.lastVisible = null;
     this.boundaryPaused = false;
@@ -78,23 +81,27 @@ export class HandInteraction {
     // point while absent, and use the original (longer) window at the edge.
     const holdMs = this.lastVisible?.boundary ? BOUNDARY.pauseMs : this.gestureMode === 'legacy' ? 120 : 150;
     const incompleteRight = this.gestureMode !== 'legacy' && inImage(points?.[8]) && !observation;
-    if (source === '摄像头' && (landmarks?.length === 0 || observation?.basis === 'unreliable' || incompleteRight) && this.state === 'Pinching'
-        && (this.lastVisible?.boundary || this.lastVisible?.stablePinch)
-        && timestamp-this.lastVisible.timestamp <= holdMs) {
-      this.boundaryPaused = true; this.pendingSince = null;
+    if (source === '摄像头' && (landmarks?.length === 0 || observation?.basis === 'unreliable' || incompleteRight)
+        && (this.state === 'Pinching' || this.state === 'Grabbing')
+        && (this.lastVisible?.boundary || this.lastVisible?.stablePinch || this.state === 'Grabbing')
+        && timestamp-this.lastVisible?.timestamp <= holdMs) {
+      this.boundaryPaused = true; this.pendingSince = null; this.grabPendingSince = null;
       if (this.gestureMode !== 'legacy') this.projectPoint.suspend?.(timestamp);
       return { state: this.state, point: null, timestamp, source, ratio: null, handIndex: null,
         ...(this.gestureMode !== 'legacy' ? { cursorPoint: this.lastVisible.cursorPoint ?? null, cursorSource: 'held',
           cursorAgeMs: timestamp-this.lastVisible.timestamp, observationValid: false } : {}),
-        tracking: this.lastVisible.boundary ? 'boundary-paused' : 'pinch-paused' };
+        tracking: this.state === 'Grabbing' ? 'grab-paused' : this.lastVisible.boundary ? 'boundary-paused' : 'pinch-paused' };
     }
     if (this.boundaryPaused && observation) {
       const previous = this.lastVisible;
       const close = (a,b) => Math.hypot(a.x-b.x,a.y-b.y) <= BOUNDARY.recoveryDistance;
       if (!previous || timestamp-previous.timestamp > holdMs
           || !close(points[8],previous.tip) || !close(points[4],previous.thumb)) {
-        this.reset({ allowResume: true }); observation = this.gestureScale.observe(points,width,height,timestamp,worldLandmarks?.[handIndex]);
-      } else if (observation.ratio >= PINCH.release && !observation.projectedContact) {
+        if (this.state !== 'Grabbing') {
+          this.reset({ allowResume: true });
+          observation = this.gestureScale.observe(points,width,height,timestamp,worldLandmarks?.[handIndex]);
+        }
+      } else if (this.state === 'Pinching' && observation.ratio >= PINCH.release && !observation.projectedContact) {
         // Open-hand reacquisition must never add a bridging segment.
         this.state = 'Idle'; this.pendingSince = null;
       }
@@ -116,7 +123,7 @@ export class HandInteraction {
       this.resumeAllowed = source === '摄像头' && (this.state === 'Pinching' || this.resumeAllowed);
       if (this.resumeAllowed) this.lossSince ??= timestamp;
       else this.lossSince = null;
-      this.state = 'TrackingLost'; this.pendingSince = null;
+      this.state = 'TrackingLost'; this.pendingSince = null; this.grabPendingSince = null;
       this.lastVisible = null; this.boundaryPaused = false;
       if (ratio === null && (!this.resumeAllowed || timestamp-this.lossSince > STROKE_CONTINUITY.pauseMs)) this.gestureScale.reset();
       if (this.resumeAllowed && this.projectPoint.suspend) this.projectPoint.suspend(timestamp);
@@ -124,7 +131,23 @@ export class HandInteraction {
     } else {
       this.lossSince = null;
       if (this.state === 'TrackingLost') this.state = this.resumeAllowed ? 'Idle' : 'Rearming';
-      if (this.state === 'Pinching') {
+      const grabAllowed = typeof this.canGrab === 'function' && Boolean(this.canGrab());
+      const fistState = grabAllowed && this.state !== 'Pinching' && this.state !== 'Rearming'
+        ? detectFist(points, worldLandmarks?.[handIndex], width, height) : null;
+      if (this.state === 'Grabbing') {
+        this.grabPendingSince = null;
+        if (!grabAllowed) {
+          this.state = 'Idle'; this.pendingSince = null;
+        } else if (fistState?.openForRelease) {
+          this.pendingSince ??= timestamp;
+          if (timestamp - this.pendingSince >= GRAB.releaseConfirmMs) {
+            this.state = 'Idle'; this.pendingSince = null;
+          }
+        } else {
+          this.pendingSince = null;
+        }
+      } else if (this.state === 'Pinching') {
+        this.grabPendingSince = null;
         // Keep the stroke through brief ratio spikes; invalid tracking still ends above.
         if (ratio < thresholds.release) this.pendingSince = null;
         else {
@@ -144,7 +167,15 @@ export class HandInteraction {
             this.pendingSince = null;
           }
         }
+      } else if (this.state === 'Idle' && fistState?.fist) {
+        this.pendingSince = null;
+        this.grabPendingSince ??= timestamp;
+        if (timestamp - this.grabPendingSince >= GRAB.confirmMs) {
+          this.state = 'Grabbing';
+          this.grabPendingSince = null;
+        }
       } else {
+        this.grabPendingSince = null;
         const confirmed = this.state === 'Rearming' ? ratio >= thresholds.release : ratio <= thresholds.enter;
         if (!confirmed) this.pendingSince = null;
         else {
@@ -156,9 +187,10 @@ export class HandInteraction {
         }
       }
     }
-    const point = qualified ? this.projectPoint(points[8], depthFrame, points, timestamp) : null;
+    const point = qualified ? this.projectPoint(points[8], depthFrame, points, timestamp,
+      { foreshortened: observation.pose === 'foreshortened' }) : null;
     const cursorPoint = qualified ? (this.projectPoint.cursorPoint ? this.projectPoint.cursorPoint() : point) : null;
-    if (qualified && (this.state === 'Pinching' || ratio >= thresholds.release)) this.resumeAllowed = false;
+    if (qualified && (this.state === 'Pinching' || this.state === 'Grabbing' || ratio >= thresholds.release)) this.resumeAllowed = false;
     if (qualified) this.lastVisible = { timestamp, tip: { ...points[8] }, thumb: { ...points[4] }, boundary: observation.boundary,
       cursorPoint: cursorPoint ? { ...cursorPoint } : null,
       pinched: this.state === 'Pinching' && ratio <= thresholds.enter,

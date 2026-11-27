@@ -22,16 +22,18 @@ export class CursorFilter {
   }
   suspend() { this.paused = true; this.candidate = null; this.history = []; }
   resume(point, timestamp) { this.suspend(); return this.update(point, timestamp); }
-  update(point, timestamp) {
+  update(point, timestamp, options = null) {
     if (!Number.isFinite(timestamp) || (this.lastSeen !== null && timestamp <= this.lastSeen)) return null;
     this.lastSeen = timestamp;
     if (!valid(point)) { this.suspend(); this.status = 'missing'; return null; }
+    const foreshortened = Boolean(options?.foreshortened);
+    const outlierLimit = foreshortened ? Math.min(this.options.outlierDistance, .45) : this.options.outlierDistance;
     if (this.last) {
       const elapsed = timestamp-this.last.timestamp, jump = distance(point, this.last.point);
       if (elapsed > this.options.resumeMs || (this.paused && jump > this.options.relocationDistance)) this.reset();
-      else if (!this.paused && jump > this.options.outlierDistance) {
+      else if (!this.paused && jump > outlierLimit) {
         const coherent = this.candidate && timestamp-this.candidate.timestamp <= 150
-          && distance(point, this.candidate.point) < this.options.outlierDistance / 2;
+          && distance(point, this.candidate.point) < outlierLimit / 2;
         this.candidate = { point: { ...point }, timestamp };
         if (!coherent) { this.status = 'outlier-held'; return { ...this.last.output }; }
       } else this.candidate = null;
@@ -48,7 +50,12 @@ export class CursorFilter {
     const travel=this.history.slice(1).reduce((sum,s,i)=>sum+distance(s.point,this.history[i].point),0);
     const moving=this.history.length===this.options.motionSamples&&travel>0&&seconds>0
       &&net/travel>=this.options.motionCoherence&&net/seconds>=this.options.motionSpeed;
-    this.filters.forEach(f=>{f.minCutoff=moving?Math.max(this.options.minCutoff,this.options.motionCutoff):this.options.minCutoff;});
+    this.filters.forEach(f=>{
+      f.minCutoff = foreshortened
+        ? this.options.minCutoff
+        : (moving ? Math.max(this.options.minCutoff, this.options.motionCutoff) : this.options.minCutoff);
+      f.beta = foreshortened ? Math.min(this.options.beta, .8) : this.options.beta;
+    });
     const output = Object.fromEntries(axes.map((k, i) => [k, this.filters[i].filter(point[k], timestamp)]));
     this.last = { timestamp, point: { ...point }, output };
     this.lastSeen = timestamp;
